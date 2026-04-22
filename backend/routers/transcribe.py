@@ -36,7 +36,7 @@ from utils.speaker_assignment import (
 import database.conversations as conversations_db
 import database.calendar_meetings as calendar_db
 import database.users as user_db
-from utils.byok import get_byok_keys
+from utils.byok import get_byok_keys, set_byok_keys
 from database.users import get_user_transcription_preferences
 from database import redis_db
 from database.redis_db import check_credits_invalidation
@@ -2851,6 +2851,7 @@ async def _listen(
 async def listen_handler(
     websocket: WebSocket,
     uid: str = Depends(auth.get_current_user_uid_ws_listen),
+    byok_keys: dict = Depends(auth.get_validated_byok_keys_ws),
     language: str = 'en',
     sample_rate: int = 8000,
     codec: str = 'pcm8',
@@ -2865,6 +2866,8 @@ async def listen_handler(
     vad_gate: str = '',
     call_id: Optional[str] = None,
 ):
+    if byok_keys:
+        set_byok_keys(byok_keys)
     custom_stt_mode = CustomSttMode.enabled if custom_stt == 'enabled' else CustomSttMode.disabled
     onboarding_mode = onboarding == 'enabled'
     speaker_auto_assign_enabled = speaker_auto_assign == 'enabled'
