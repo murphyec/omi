@@ -216,3 +216,106 @@ def validate_byok_websocket(uid: str) -> Optional[str]:
     if error:
         logger.warning('BYOK WS validation failed uid=%s: %s', uid, error)
     return error
+
+
+# ---------------------------------------------------------------------------
+# Thread-safe BYOK key validation that returns keys instead of mutating
+# ContextVar.  Designed for use in FastAPI dependencies (which may run in
+# worker threads where ContextVar mutations are discarded).
+# ---------------------------------------------------------------------------
+
+
+def _extract_byok_from_request(request: Request) -> Dict[str, str]:
+    """Read BYOK headers from an HTTP request."""
+    keys: Dict[str, str] = {}
+    for provider, header in BYOK_HEADERS.items():
+        value = request.headers.get(header)
+        if value:
+            keys[provider] = value
+    return keys
+
+
+def validate_and_return_byok_keys(uid: str, keys: Dict[str, str]) -> Dict[str, str]:
+    """Validate BYOK keys against Firestore enrollment and return validated keys.
+
+    This function NEVER mutates the ContextVar — it only reads Firestore state
+    and returns a dict.  The caller (an async handler) is responsible for
+    calling ``set_byok_keys()`` with the result.
+
+    Returns:
+        The validated keys dict if the user is BYOK-active and keys match.
+        Empty dict if the user is not BYOK-active or no keys were provided.
+
+    Raises:
+        HTTPException(403) for HTTP callers when keys are present but invalid.
+    """
+    if not keys:
+        return {}
+
+    import database.users as users_db
+
+    state = get_cached_byok_state(uid)
+
+    is_active = False
+    if state.get('active'):
+        last_seen = state.get('last_seen_at')
+        if isinstance(last_seen, datetime):
+            age = (datetime.now(timezone.utc) - last_seen).total_seconds()
+            is_active = age <= users_db.BYOK_HEARTBEAT_TTL_SECONDS
+
+    if not is_active:
+        return {}
+
+    stored_fingerprints = state.get('fingerprints', {})
+    for provider, stored_fp in stored_fingerprints.items():
+        raw_key = keys.get(provider)
+        if not raw_key:
+            error = f"BYOK key header missing for enrolled provider: {provider}"
+            logger.warning('BYOK validation failed uid=%s: %s', uid, error)
+            raise HTTPException(status_code=403, detail=error)
+        request_fp = hashlib.sha256(raw_key.encode()).hexdigest()
+        if request_fp != stored_fp:
+            error = f"BYOK key fingerprint mismatch for provider: {provider}"
+            logger.warning('BYOK validation failed uid=%s: %s', uid, error)
+            raise HTTPException(status_code=403, detail=error)
+
+    return keys
+
+
+def validate_and_return_byok_keys_ws(uid: str, keys: Dict[str, str]) -> Dict[str, str]:
+    """Same as validate_and_return_byok_keys but raises WebSocketException(4003)."""
+    if not keys:
+        return {}
+
+    import database.users as users_db
+
+    state = get_cached_byok_state(uid)
+
+    is_active = False
+    if state.get('active'):
+        last_seen = state.get('last_seen_at')
+        if isinstance(last_seen, datetime):
+            age = (datetime.now(timezone.utc) - last_seen).total_seconds()
+            is_active = age <= users_db.BYOK_HEARTBEAT_TTL_SECONDS
+
+    if not is_active:
+        return {}
+
+    stored_fingerprints = state.get('fingerprints', {})
+    for provider, stored_fp in stored_fingerprints.items():
+        raw_key = keys.get(provider)
+        if not raw_key:
+            error = f"BYOK key header missing for enrolled provider: {provider}"
+            logger.warning('BYOK WS validation failed uid=%s: %s', uid, error)
+            from fastapi import WebSocketException
+
+            raise WebSocketException(code=4003, reason=error)
+        request_fp = hashlib.sha256(raw_key.encode()).hexdigest()
+        if request_fp != stored_fp:
+            error = f"BYOK key fingerprint mismatch for provider: {provider}"
+            logger.warning('BYOK WS validation failed uid=%s: %s', uid, error)
+            from fastapi import WebSocketException
+
+            raise WebSocketException(code=4003, reason=error)
+
+    return keys
