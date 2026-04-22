@@ -1,7 +1,7 @@
-import asyncio
 import json
 import os
 import time
+from typing import Dict
 
 from fastapi import Depends, Header, HTTPException, WebSocketException
 from fastapi import Request
@@ -13,7 +13,12 @@ import redis as redis_pkg
 
 from database.redis_db import check_rate_limit, try_acquire_listen_lock
 from database.users import record_user_platform
-from utils.byok import extract_byok_from_websocket, set_byok_keys, validate_byok_request, validate_byok_websocket
+from utils.byok import (
+    _extract_byok_from_request,
+    extract_byok_from_websocket,
+    validate_and_return_byok_keys,
+    validate_and_return_byok_keys_ws,
+)
 from utils.rate_limit_config import RATE_POLICIES, RATE_LIMIT_SHADOW, get_effective_limit
 
 logger = logging.getLogger(__name__)
@@ -63,7 +68,9 @@ def get_current_user_uid(
     write per (uid, platform) every 10 minutes. Failures here never fail the
     request — it's telemetry, not auth.
 
-    Also validates BYOK headers against Firestore enrollment (if applicable).
+    BYOK validation is handled by the separate ``get_validated_byok_keys_http``
+    dependency — not here — to avoid ContextVar mutations in sync deps that
+    run in worker threads (where mutations are discarded).
     """
     if not authorization:
         raise HTTPException(status_code=401, detail="Authorization header not found")
@@ -81,12 +88,6 @@ def get_current_user_uid(
         record_user_platform(uid, x_app_platform)
     except Exception as e:  # noqa: BLE001 — telemetry must never fail the request
         logger.debug("record_user_platform swallowed error for uid=%s: %s", uid, e)
-
-    # Validate BYOK keys against Firestore enrollment for ALL authenticated
-    # HTTP endpoints.  Runs after auth so we have the uid.  Lightweight: uses
-    # a 30-second TTL cache for Firestore state, and is a no-op when no BYOK
-    # headers are present.
-    validate_byok_request(uid)
 
     return uid
 
@@ -143,39 +144,17 @@ def _verify_ws_auth(authorization: str) -> str:
         raise WebSocketException(code=1008, reason="Auth error")
 
 
-async def get_current_user_uid_ws_listen(
-    websocket: WebSocket = None,
-    authorization: str = Header(None),
-):
+def get_current_user_uid_ws_listen(authorization: str = Header(None)):
     """WebSocket auth for /v4/listen — NO rate limiting.
 
     Mobile apps reconnect legitimately on network switch / backgrounding,
     so the per-UID rate limiter must not block them.
 
-    Also extracts BYOK headers from the WS upgrade request and validates
-    them against Firestore enrollment (BaseHTTPMiddleware doesn't fire for
-    WebSocket scope, so this is the shared entry point for WS BYOK).
-
-    **Why async:** Starlette runs sync WS deps in a worker thread via
-    ``anyio.to_thread.run_sync``, which copies the context. ContextVar
-    mutations inside the sync dep (``set_byok_keys``) are discarded when
-    control returns to the async handler, so ``get_byok_key('deepgram')``
-    would return None downstream. Running the dep on the event loop keeps
-    the mutation in the handler's context; the blocking Firebase and
-    Firestore calls are offloaded via ``asyncio.to_thread``.
+    BYOK validation is handled by the separate ``get_validated_byok_keys_ws``
+    dependency — not here — to avoid ContextVar mutations in sync deps that
+    run in worker threads (where mutations are discarded).
     """
-    uid = await asyncio.to_thread(_verify_ws_auth, authorization)
-
-    # Extract BYOK headers from the WS upgrade request and validate.
-    if websocket is not None:
-        byok_keys = extract_byok_from_websocket(websocket)
-        if byok_keys:
-            set_byok_keys(byok_keys)
-        error = await asyncio.to_thread(validate_byok_websocket, uid)
-        if error:
-            raise WebSocketException(code=4003, reason=error)
-
-    return uid
+    return _verify_ws_auth(authorization)
 
 
 def get_current_user_uid_ws(authorization: str = Header(None)):
@@ -330,6 +309,41 @@ def check_rate_limit_inline(key: str, policy_name: str):
     Use when auth is not a standard Depends() pattern (e.g., MCP, integration).
     """
     _enforce_rate_limit(key, policy_name)
+
+
+# ---------------------------------------------------------------------------
+# BYOK key dependencies — extract, validate, return.
+#
+# These deps run in sync worker threads (like all sync FastAPI deps), so they
+# NEVER mutate ContextVar.  They return validated keys as a plain dict; the
+# async handler calls ``set_byok_keys()`` to install them in its own context.
+# ---------------------------------------------------------------------------
+
+
+def get_validated_byok_keys_http(
+    request: Request,
+    uid: str = Depends(get_current_user_uid),
+) -> Dict[str, str]:
+    """Extract and validate BYOK keys from an HTTP request.
+
+    Returns validated keys dict (empty if user is not BYOK-active or no
+    headers).  Raises HTTPException(403) on fingerprint mismatch.
+    """
+    keys = _extract_byok_from_request(request)
+    return validate_and_return_byok_keys(uid, keys)
+
+
+def get_validated_byok_keys_ws(
+    websocket: WebSocket,
+    uid: str = Depends(get_current_user_uid_ws_listen),
+) -> Dict[str, str]:
+    """Extract and validate BYOK keys from a WebSocket upgrade request.
+
+    Returns validated keys dict (empty if user is not BYOK-active or no
+    headers).  Raises WebSocketException(4003) on fingerprint mismatch.
+    """
+    keys = extract_byok_from_websocket(websocket)
+    return validate_and_return_byok_keys_ws(uid, keys)
 
 
 def timeit(func):
