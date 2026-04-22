@@ -72,6 +72,7 @@ from utils.stt.speaker_embedding import (
     compare_embeddings,
     SPEAKER_MATCH_THRESHOLD,
 )
+from utils.byok import set_byok_keys
 from utils.subscription import has_transcription_credits
 
 logger = logging.getLogger(__name__)
@@ -1100,16 +1101,18 @@ async def sync_local_files(
     response: Response,
     files: List[UploadFile] = File(...),
     uid: str = Depends(auth.get_current_user_uid),
+    byok_keys: dict = Depends(auth.get_validated_byok_keys_http),
     conversation_id: str = Query(
         None, description="Target conversation ID to attach audio to (auto-sync from live capture)"
     ),
 ):
+    if byok_keys:
+        set_byok_keys(byok_keys)
     logger.warning(
         f'sync: deprecated v1 sync-local-files called uid={uid} files={len(files)} '
         f'user_agent={request.headers.get("user-agent", "")}'
     )
     response.headers.update(_V1_DEPRECATION_HEADERS)
-
     # Pre-check gates (#5854)
     if is_hard_restricted(uid):
         raise HTTPException(
@@ -1593,6 +1596,7 @@ def _run_full_pipeline_background(
 async def sync_local_files_v2(
     files: List[UploadFile] = File(...),
     uid: str = Depends(auth.get_current_user_uid),
+    byok_keys: dict = Depends(auth.get_validated_byok_keys_http),
     conversation_id: str = Query(
         None, description="Target conversation ID to attach audio to (auto-sync from live capture)"
     ),
@@ -1602,6 +1606,8 @@ async def sync_local_files_v2(
     immediately, then runs the full pipeline (decode → VAD → STT → LLM) in
     a background thread. The app polls GET /v2/sync-local-files/{job_id}.
     """
+    if byok_keys:
+        set_byok_keys(byok_keys)
     # Pre-check gates (same as v1)
     if is_hard_restricted(uid):
         raise HTTPException(status_code=429, detail="Account temporarily restricted due to fair-use policy")
