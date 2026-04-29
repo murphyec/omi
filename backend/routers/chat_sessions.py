@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import Request, APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 import database.chat as chat_db
@@ -72,29 +72,26 @@ class GenerateTitleRequest(BaseModel):
 
 
 @router.post('/v2/chat-sessions', tags=['chat-sessions'])
-def create_chat_session(
-    request: CreateChatSessionRequest,
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def create_chat_session(request: CreateChatSessionRequest):
+    uid = request.state.uid
     return chat_db.create_chat_session(uid, title=request.title, app_id=request.app_id)
 
 
 @router.get('/v2/chat-sessions', tags=['chat-sessions'])
 def get_chat_sessions(
+    request: Request,
     app_id: str | None = Query(None),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     starred: bool | None = Query(None),
-    uid: str = Depends(auth.get_current_user_uid),
 ):
+    uid = request.state.uid
     return chat_db.get_chat_sessions(uid, app_id=app_id, limit=limit, offset=offset, starred=starred)
 
 
 @router.get('/v2/chat-sessions/{session_id}', tags=['chat-sessions'])
-def get_chat_session(
-    session_id: str,
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def get_chat_session(request: Request, session_id: str):
+    uid = request.state.uid
     result = chat_db.get_chat_session_by_id(uid, session_id)
     if result is None:
         raise HTTPException(status_code=404, detail='Chat session not found')
@@ -102,11 +99,8 @@ def get_chat_session(
 
 
 @router.patch('/v2/chat-sessions/{session_id}', tags=['chat-sessions'])
-def update_chat_session(
-    session_id: str,
-    request: UpdateChatSessionRequest,
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def update_chat_session(session_id: str, request: UpdateChatSessionRequest):
+    uid = request.state.uid
     result = chat_db.update_chat_session(uid, session_id, title=request.title, starred=request.starred)
     if result is None:
         raise HTTPException(status_code=404, detail='Chat session not found')
@@ -114,10 +108,8 @@ def update_chat_session(
 
 
 @router.delete('/v2/chat-sessions/{session_id}', tags=['chat-sessions'])
-def delete_chat_session(
-    session_id: str,
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def delete_chat_session(request: Request, session_id: str):
+    uid = request.state.uid
     chat_db.delete_chat_session(uid, session_id, cascade_messages=True)
     return {'status': 'ok'}
 
@@ -130,10 +122,8 @@ def delete_chat_session(
 
 
 @router.post('/v2/desktop/messages', tags=['chat-sessions'])
-def save_message(
-    request: SaveMessageRequest,
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def save_message(request: SaveMessageRequest):
+    uid = request.state.uid
     return chat_db.save_message(
         uid,
         text=request.text,
@@ -146,31 +136,26 @@ def save_message(
 
 @router.get('/v2/desktop/messages', tags=['chat-sessions'])
 def get_messages(
+    request: Request,
     app_id: str | None = Query(None),
     session_id: str | None = Query(None),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
-    uid: str = Depends(auth.get_current_user_uid),
 ):
+    uid = request.state.uid
     return chat_db.get_messages(uid, app_id=app_id, chat_session_id=session_id, limit=limit, offset=offset)
 
 
 @router.delete('/v2/desktop/messages', tags=['chat-sessions'])
-def delete_messages(
-    app_id: str | None = Query(None),
-    session_id: str | None = Query(None),
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def delete_messages(request: Request, app_id: str | None = Query(None), session_id: str | None = Query(None)):
+    uid = request.state.uid
     count = chat_db.delete_messages(uid, app_id=app_id, session_id=session_id)
     return {'status': 'ok', 'deleted_count': count}
 
 
 @router.patch('/v2/desktop/messages/{message_id}/rating', tags=['chat-sessions'])
-def rate_message(
-    message_id: str,
-    request: RateMessageRequest,
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def rate_message(message_id: str, request: RateMessageRequest):
+    uid = request.state.uid
     if request.rating is not None and request.rating not in (1, -1):
         raise HTTPException(status_code=400, detail='Rating must be 1, -1, or null')
     if not chat_db.update_message_rating(uid, message_id, request.rating):
@@ -187,11 +172,11 @@ def rate_message(
 # ============================================================================
 
 
-@router.post('/v2/chat/initial-message', tags=['chat-sessions'])
-def create_initial_message(
-    request: InitialMessageRequest,
-    uid: str = Depends(auth.with_rate_limit(auth.get_current_user_uid, "chat:initial")),
-):
+@router.post(
+    '/v2/chat/initial-message', tags=['chat-sessions'], dependencies=[Depends(auth.with_rate_limit("chat:initial"))]
+)
+def create_initial_message(request: InitialMessageRequest):
+    uid = request.state.uid
     """Generate an initial greeting message for a chat session.
 
     Delegates to the existing initial_message_util in routers/chat.py which
@@ -203,11 +188,11 @@ def create_initial_message(
     return {'message': ai_message.text, 'message_id': ai_message.id}
 
 
-@router.post('/v2/chat/generate-title', tags=['chat-sessions'])
-def generate_session_title(
-    request: GenerateTitleRequest,
-    uid: str = Depends(auth.with_rate_limit(auth.get_current_user_uid, "chat:initial")),
-):
+@router.post(
+    '/v2/chat/generate-title', tags=['chat-sessions'], dependencies=[Depends(auth.with_rate_limit("chat:initial"))]
+)
+def generate_session_title(request: GenerateTitleRequest):
+    uid = request.state.uid
     """Generate a title for a chat session based on its messages."""
     from utils.llm.clients import get_llm
 
@@ -226,9 +211,8 @@ def generate_session_title(
 
 
 @router.get('/v1/users/stats/chat-messages', tags=['chat-sessions'])
-def get_chat_message_count(
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def get_chat_message_count(request: Request):
+    uid = request.state.uid
     """Get total count of chat messages for the user."""
     count = chat_db.get_message_count(uid)
     return {'count': count}

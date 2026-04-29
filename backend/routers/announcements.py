@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from database.announcements import (
@@ -79,7 +79,7 @@ async def get_features(
 async def get_announcements(
     last_checked_at: Optional[str] = Query(
         None, description="ISO timestamp of last check (only returns newer announcements)"
-    ),
+    )
 ):
     """
     Get active, non-expired general announcements.
@@ -105,12 +105,12 @@ async def get_announcements(
 
 @router.get("/v1/announcements/pending", response_model=List[Announcement], tags=["announcements"])
 async def get_pending_announcements_endpoint(
+    request: Request,
     app_version: str = Query(..., description="Current app version (e.g., '1.0.522+240')"),
     platform: str = Query(..., description="Platform: 'ios' or 'android'"),
     trigger: str = Query(..., description="Trigger: 'app_launch', 'version_upgrade', or 'firmware_upgrade'"),
     firmware_version: Optional[str] = Query(None, description="Current firmware version (optional)"),
     device_model: Optional[str] = Query(None, description="Device model name (optional)"),
-    uid: str = Depends(auth_endpoints.get_current_user_uid),
 ):
     """
     Get all pending announcements for a user.
@@ -131,6 +131,7 @@ async def get_pending_announcements_endpoint(
     - version_upgrade: Check only when app version changed
     - firmware_upgrade: Check only when firmware version changed
     """
+    uid = request.state.uid
     if platform not in ["ios", "android"]:
         raise HTTPException(status_code=400, detail="Platform must be 'ios' or 'android'")
 
@@ -158,9 +159,9 @@ class DismissAnnouncementRequest(BaseModel):
 
 @router.post("/v1/announcements/{announcement_id}/dismiss", tags=["announcements"])
 async def dismiss_announcement_endpoint(
+    request: Request,
     announcement_id: str,
     data: DismissAnnouncementRequest,
-    uid: str = Depends(auth_endpoints.get_current_user_uid),
 ):
     """
     Mark an announcement as dismissed for the current user.
@@ -168,6 +169,7 @@ async def dismiss_announcement_endpoint(
     This prevents the announcement from being shown again if show_once is True.
     The cta_clicked field can be used to track whether the user engaged with the call-to-action.
     """
+    uid = request.state.uid
     # Verify announcement exists
     announcement = get_announcement_by_id(announcement_id)
     if not announcement:
@@ -235,18 +237,12 @@ async def list_all_announcements(
     """
     _verify_admin_key(secret_key)
 
-    announcements = get_all_announcements(
-        announcement_type=announcement_type,
-        active_only=active_only,
-    )
+    announcements = get_all_announcements(announcement_type=announcement_type, active_only=active_only)
     return announcements
 
 
 @router.get("/v1/announcements/{announcement_id}", response_model=Announcement, tags=["admin"])
-async def get_announcement(
-    announcement_id: str,
-    secret_key: str = Header(..., description="Admin secret key"),
-):
+async def get_announcement(announcement_id: str, secret_key: str = Header(..., description="Admin secret key")):
     """
     Get a single announcement by ID.
     Requires admin authentication via secret-key header.
@@ -262,8 +258,7 @@ async def get_announcement(
 
 @router.post("/v1/announcements", response_model=Announcement, tags=["admin"])
 async def create_announcement_endpoint(
-    data: CreateAnnouncementRequest,
-    secret_key: str = Header(..., description="Admin secret key"),
+    data: CreateAnnouncementRequest, secret_key: str = Header(..., description="Admin secret key")
 ):
     """
     Create a new announcement.
@@ -301,9 +296,7 @@ async def create_announcement_endpoint(
 
 @router.put("/v1/announcements/{announcement_id}", response_model=Announcement, tags=["admin"])
 async def update_announcement_endpoint(
-    announcement_id: str,
-    data: UpdateAnnouncementRequest,
-    secret_key: str = Header(..., description="Admin secret key"),
+    announcement_id: str, data: UpdateAnnouncementRequest, secret_key: str = Header(..., description="Admin secret key")
 ):
     """
     Update an existing announcement.

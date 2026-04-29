@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Optional, List
 from enum import Enum
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import Request, APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from database import goals as goals_db
@@ -86,7 +86,8 @@ class AdviceResponse(BaseModel):
 
 
 @router.get('/v1/goals', tags=['goals'])
-async def get_current_goal(uid: str = Depends(auth.get_current_user_uid)) -> Optional[dict]:
+async def get_current_goal(request: Request) -> Optional[dict]:
+    uid = request.state.uid
     """Get the current active goal for the user (backward compatibility)."""
     goal = goals_db.get_user_goal(uid)
     if goal:
@@ -99,7 +100,8 @@ async def get_current_goal(uid: str = Depends(auth.get_current_user_uid)) -> Opt
 
 
 @router.get('/v1/goals/all', tags=['goals'])
-async def get_all_goals(uid: str = Depends(auth.get_current_user_uid)) -> List[dict]:
+async def get_all_goals(request: Request) -> List[dict]:
+    uid = request.state.uid
     """Get all active goals for the user (up to 4)."""
     goals = goals_db.get_user_goals(uid, limit=4)
 
@@ -114,7 +116,8 @@ async def get_all_goals(uid: str = Depends(auth.get_current_user_uid)) -> List[d
 
 
 @router.post('/v1/goals', tags=['goals'])
-async def create_goal(goal: GoalCreate, uid: str = Depends(auth.get_current_user_uid)) -> dict:
+async def create_goal(request: Request, goal: GoalCreate) -> dict:
+    uid = request.state.uid
     """Create a new goal. This will deactivate any existing active goal."""
     goal_data = {
         'id': f"goal_{uuid.uuid4().hex[:12]}",
@@ -139,7 +142,8 @@ async def create_goal(goal: GoalCreate, uid: str = Depends(auth.get_current_user
 
 
 @router.patch('/v1/goals/{goal_id}', tags=['goals'])
-async def update_goal(goal_id: str, updates: GoalUpdate, uid: str = Depends(auth.get_current_user_uid)) -> dict:
+async def update_goal(request: Request, goal_id: str, updates: GoalUpdate) -> dict:
+    uid = request.state.uid
     """Update an existing goal."""
     update_data = updates.model_dump(exclude_unset=True)
 
@@ -162,10 +166,9 @@ async def update_goal(goal_id: str, updates: GoalUpdate, uid: str = Depends(auth
 
 @router.patch('/v1/goals/{goal_id}/progress', tags=['goals'])
 async def update_goal_progress(
-    goal_id: str,
-    current_value: float = Query(..., description="New progress value"),
-    uid: str = Depends(auth.get_current_user_uid),
+    request: Request, goal_id: str, current_value: float = Query(..., description="New progress value")
 ) -> dict:
+    uid = request.state.uid
     """Update the progress value of a goal."""
     updated_goal = goals_db.update_goal_progress(uid, goal_id, current_value)
 
@@ -182,9 +185,8 @@ async def update_goal_progress(
 
 
 @router.get('/v1/goals/{goal_id}/history', tags=['goals'])
-async def get_goal_history(
-    goal_id: str, days: int = Query(default=30, le=365), uid: str = Depends(auth.get_current_user_uid)
-) -> List[dict]:
+async def get_goal_history(request: Request, goal_id: str, days: int = Query(default=30, le=365)) -> List[dict]:
+    uid = request.state.uid
     """Get progress history for a goal."""
     history = goals_db.get_goal_history(uid, goal_id, days)
 
@@ -197,7 +199,8 @@ async def get_goal_history(
 
 
 @router.delete('/v1/goals/{goal_id}', tags=['goals'])
-async def delete_goal(goal_id: str, uid: str = Depends(auth.get_current_user_uid)) -> dict:
+async def delete_goal(request: Request, goal_id: str) -> dict:
+    uid = request.state.uid
     """Delete a goal."""
     success = goals_db.delete_goal(uid, goal_id)
 
@@ -207,16 +210,16 @@ async def delete_goal(goal_id: str, uid: str = Depends(auth.get_current_user_uid
     return {"success": True, "deleted_id": goal_id}
 
 
-@router.get('/v1/goals/suggest', tags=['goals'])
-async def suggest_goal(uid: str = Depends(auth.with_rate_limit(auth.get_current_user_uid, "goals:suggest"))) -> dict:
+@router.get('/v1/goals/suggest', tags=['goals'], dependencies=[Depends(auth.with_rate_limit("goals:suggest"))])
+async def suggest_goal(request: Request) -> dict:
+    uid = request.state.uid
     """Generate an AI-suggested goal based on user's memories and conversations."""
     return suggest_goal_llm(uid)
 
 
-@router.get('/v1/goals/{goal_id}/advice', tags=['goals'])
-async def get_goal_advice(
-    goal_id: str, uid: str = Depends(auth.with_rate_limit(auth.get_current_user_uid, "goals:advice"))
-) -> dict:
+@router.get('/v1/goals/{goal_id}/advice', tags=['goals'], dependencies=[Depends(auth.with_rate_limit("goals:advice"))])
+async def get_goal_advice(request: Request, goal_id: str) -> dict:
+    uid = request.state.uid
     """Get AI-generated actionable advice for achieving a goal."""
     try:
         advice = get_goal_advice_llm(uid, goal_id)
@@ -225,10 +228,9 @@ async def get_goal_advice(
         raise HTTPException(status_code=404, detail="Goal not found")
 
 
-@router.get('/v1/goals/advice', tags=['goals'])
-async def get_current_goal_advice(
-    uid: str = Depends(auth.with_rate_limit(auth.get_current_user_uid, "goals:advice"))
-) -> dict:
+@router.get('/v1/goals/advice', tags=['goals'], dependencies=[Depends(auth.with_rate_limit("goals:advice"))])
+async def get_current_goal_advice(request: Request) -> dict:
+    uid = request.state.uid
     """Get AI-generated advice for the current active goal."""
     goal = goals_db.get_user_goal(uid)
     if not goal:
@@ -243,11 +245,11 @@ class ProgressExtractRequest(BaseModel):
     text: str
 
 
-@router.post('/v1/goals/extract-progress', tags=['goals'])
-async def extract_and_update_progress(
-    request: ProgressExtractRequest,
-    uid: str = Depends(auth.with_rate_limit(auth.get_current_user_uid, "goals:extract")),
-) -> dict:
+@router.post(
+    '/v1/goals/extract-progress', tags=['goals'], dependencies=[Depends(auth.with_rate_limit("goals:extract"))]
+)
+async def extract_and_update_progress(request: ProgressExtractRequest) -> dict:
+    uid = request.state.uid
     """
     Extract goal progress from conversation/chat text and update if found.
     Uses LLM to understand context and extract numeric progress.

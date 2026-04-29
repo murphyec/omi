@@ -58,11 +58,12 @@ def check_rate_limit(app_id: str, user_id: str) -> Tuple[bool, int, int, int]:
 
 @router.post('/v1/users/fcm-token')
 def save_token(
+    request: Request,
     data: SaveFcmTokenRequest,
-    uid: str = Depends(auth.get_current_user_uid),
     x_app_platform: str = Header(None, alias='X-App-Platform'),
     x_device_id_hash: str = Header(None, alias='X-Device-Id-Hash'),
 ):
+    uid = request.state.uid
     platform = x_app_platform or 'unknown'
     device_hash = x_device_id_hash or 'default'
 

@@ -12,9 +12,7 @@ from database.redis_db import enable_app, increase_app_installs_count
 from utils.apps import is_user_app_enabled, get_is_user_paid_app, is_tester
 from models.app import App as AppModel, ActionType
 
-router = APIRouter(
-    tags=["oauth"],
-)
+router = APIRouter(tags=["oauth"])
 
 # Ensure the templates directory exists
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -22,11 +20,7 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 
 @router.get("/v1/oauth/authorize", response_class=HTMLResponse)
-async def oauth_authorize(
-    request: Request,
-    app_id: str,
-    state: Optional[str] = None,
-):
+async def oauth_authorize(request: Request, app_id: str, state: Optional[str] = None):
     app_data = get_app_by_id_db(app_id)
     if not app_data:
         raise HTTPException(status_code=404, detail="App not found")

@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 import google.auth
 import google.auth.transport.requests
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from database.users import get_agent_vm
@@ -260,12 +260,10 @@ class ExecuteToolRequest(BaseModel):
     params: dict = {}
 
 
-@router.post("/v1/agent/execute-tool")
-async def execute_tool(
-    body: ExecuteToolRequest,
-    uid: str = Depends(with_rate_limit(get_current_user_uid, "agent:execute_tool")),
-):
+@router.post("/v1/agent/execute-tool", dependencies=[Depends(with_rate_limit("agent:execute_tool"))])
+async def execute_tool(request: Request, body: ExecuteToolRequest):
     """Execute a named tool and return its result."""
+    uid = request.state.uid
     # Set up agent_config_context so tools can resolve the UID
     config = {
         "configurable": {

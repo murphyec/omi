@@ -7,7 +7,7 @@ import hashlib
 import os
 
 import pytz
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import Request, APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -36,10 +36,7 @@ from database.redis_db import (
     get_generic_cache,
     set_generic_cache,
 )
-from database.users import (
-    get_user_transcription_preferences,
-    set_user_transcription_preferences,
-)
+from database.users import get_user_transcription_preferences, set_user_transcription_preferences
 from utils.stt.streaming import deepgram_nova3_multi_languages
 from database.users import *
 from models.conversation import Conversation
@@ -116,7 +113,8 @@ class BatchMigrationRequest(BaseModel):
 
 
 @router.get('/v1/users/profile', tags=['v1'])
-def get_user_profile_endpoint(uid: str = Depends(auth.get_current_user_uid)):
+def get_user_profile_endpoint(request: Request):
+    uid = request.state.uid
     """Gets the full user profile, including data protection and migration status."""
     profile = get_user_profile(uid)
     if not profile:
@@ -138,10 +136,8 @@ def _background_wipe_user_data(uid: str):
 
 
 @router.delete('/v1/users/delete-account', tags=['v1'])
-def delete_account(
-    request: DeleteAccountRequest = DeleteAccountRequest(),
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def delete_account(request: DeleteAccountRequest = DeleteAccountRequest()):
+    uid = request.state.uid
     try:
         # 1. Persist deletion feedback first (top-level collection survives wipe).
         if request.reason or request.reason_details:
@@ -163,7 +159,7 @@ def delete_account(
 
         # 3. Wipe Firestore subcollections in the background — can take minutes
         #    for heavy users and would otherwise time out at the load balancer.
-        threading.Thread(target=_background_wipe_user_data, args=(uid,), daemon=True).start()
+        threading.Thread(target=_background_wipe_user_data, args=(uid), daemon=True).start()
 
         return {'status': 'ok', 'message': 'Account deletion started'}
     except Exception as e:
@@ -172,7 +168,8 @@ def delete_account(
 
 
 @router.patch('/v1/users/geolocation', tags=['v1'])
-def set_user_geolocation(geolocation: Geolocation, uid: str = Depends(auth.get_current_user_uid)):
+def set_user_geolocation(request: Request, geolocation: Geolocation):
+    uid = request.state.uid
     last_location_data = get_cached_user_geolocation(uid)
     if last_location_data:
         try:
@@ -204,7 +201,8 @@ def set_user_geolocation(geolocation: Geolocation, uid: str = Depends(auth.get_c
 
 
 @router.post('/v1/users/developer/webhook/{wtype}', tags=['v1'])
-def set_user_webhook_endpoint(wtype: WebhookType, data: dict, uid: str = Depends(auth.get_current_user_uid)):
+def set_user_webhook_endpoint(request: Request, wtype: WebhookType, data: dict):
+    uid = request.state.uid
     url = data['url']
     if url == '' or url == ',':
         disable_user_webhook_db(uid, wtype)
@@ -213,25 +211,29 @@ def set_user_webhook_endpoint(wtype: WebhookType, data: dict, uid: str = Depends
 
 
 @router.get('/v1/users/developer/webhook/{wtype}', tags=['v1'])
-def get_user_webhook_endpoint(wtype: WebhookType, uid: str = Depends(auth.get_current_user_uid)):
+def get_user_webhook_endpoint(request: Request, wtype: WebhookType):
+    uid = request.state.uid
     return {'url': get_user_webhook_db(uid, wtype)}
 
 
 @router.post('/v1/users/developer/webhook/{wtype}/disable', tags=['v1'])
-def disable_user_webhook_endpoint(wtype: WebhookType, uid: str = Depends(auth.get_current_user_uid)):
+def disable_user_webhook_endpoint(request: Request, wtype: WebhookType):
+    uid = request.state.uid
     disable_user_webhook_db(uid, wtype)
     return {'status': 'ok'}
 
 
 @router.post('/v1/users/developer/webhook/{wtype}/enable', tags=['v1'])
-def enable_user_webhook_endpoint(wtype: WebhookType, uid: str = Depends(auth.get_current_user_uid)):
+def enable_user_webhook_endpoint(request: Request, wtype: WebhookType):
+    uid = request.state.uid
     enable_user_webhook_db(uid, wtype)
     return {'status': 'ok'}
 
 
 @router.get('/v1/users/developer/webhooks/status', tags=['v1'])
-def get_user_webhooks_status(uid: str = Depends(auth.get_current_user_uid)):
+def get_user_webhooks_status(request: Request):
     # This only happens the first time because the user_webhook_status_db function will return None for existing users
+    uid = request.state.uid
     audio_bytes = user_webhook_status_db(uid, WebhookType.audio_bytes)
     if audio_bytes is None:
         audio_bytes = webhook_first_time_setup(uid, WebhookType.audio_bytes)
@@ -258,18 +260,21 @@ def get_user_webhooks_status(uid: str = Depends(auth.get_current_user_uid)):
 
 
 @router.post('/v1/users/store-recording-permission', tags=['v1'])
-def store_recording_permission(value: bool, uid: str = Depends(auth.get_current_user_uid)):
+def store_recording_permission(request: Request, value: bool):
+    uid = request.state.uid
     set_user_store_recording_permission(uid, value)
     return {'status': 'ok'}
 
 
 @router.get('/v1/users/store-recording-permission', tags=['v1'])
-def get_store_recording_permission(uid: str = Depends(auth.get_current_user_uid)):
+def get_store_recording_permission(request: Request):
+    uid = request.state.uid
     return {'store_recording_permission': get_user_store_recording_permission(uid)}
 
 
 @router.delete('/v1/users/store-recording-permission', tags=['v1'])
-def delete_permission_and_recordings(uid: str = Depends(auth.get_current_user_uid)):
+def delete_permission_and_recordings(request: Request):
+    uid = request.state.uid
     set_user_store_recording_permission(uid, False)
     delete_all_conversation_recordings(uid)
     return {'status': 'ok'}
@@ -281,7 +286,8 @@ def delete_permission_and_recordings(uid: str = Depends(auth.get_current_user_ui
 
 
 @router.get('/v1/users/onboarding', tags=['v1'])
-def get_onboarding_state(uid: str = Depends(auth.get_current_user_uid)):
+def get_onboarding_state(request: Request):
+    uid = request.state.uid
     """Get the user's onboarding state (completed status, acquisition source, etc.)."""
     state = get_user_onboarding_state(uid)
     return {
@@ -291,7 +297,8 @@ def get_onboarding_state(uid: str = Depends(auth.get_current_user_uid)):
 
 
 @router.patch('/v1/users/onboarding', tags=['v1'])
-def update_onboarding_state(data: dict, uid: str = Depends(auth.get_current_user_uid)):
+def update_onboarding_state(request: Request, data: dict):
+    uid = request.state.uid
     """Update the user's onboarding state."""
     current_state = get_user_onboarding_state(uid)
     if 'completed' in data:
@@ -308,13 +315,15 @@ def update_onboarding_state(data: dict, uid: str = Depends(auth.get_current_user
 
 
 @router.post('/v1/users/private-cloud-sync', tags=['v1'])
-def set_private_cloud_sync(value: bool, uid: str = Depends(auth.get_current_user_uid)):
+def set_private_cloud_sync(request: Request, value: bool):
+    uid = request.state.uid
     set_user_private_cloud_sync_enabled(uid, value)
     return {'status': 'ok'}
 
 
 @router.get('/v1/users/private-cloud-sync', tags=['v1'])
-def get_private_cloud_sync(uid: str = Depends(auth.get_current_user_uid)):
+def get_private_cloud_sync(request: Request):
+    uid = request.state.uid
     return {'private_cloud_sync_enabled': get_user_private_cloud_sync_enabled(uid)}
 
 
@@ -325,7 +334,8 @@ def get_private_cloud_sync(uid: str = Depends(auth.get_current_user_uid)):
 
 # TODO: consider adding person photo.
 @router.post('/v1/users/people', tags=['v1'], response_model=Person)
-def get_or_create_person(data: CreatePerson, uid: str = Depends(auth.get_current_user_uid)):
+def get_or_create_person(request: Request, data: CreatePerson):
+    uid = request.state.uid
     """Create a new person or return existing one with same name (idempotent by name).
 
     This enables backward compatibility: old apps can call this API and get the
@@ -348,9 +358,8 @@ def get_or_create_person(data: CreatePerson, uid: str = Depends(auth.get_current
 
 
 @router.get('/v1/users/people/{person_id}', tags=['v1'], response_model=Person)
-def get_single_person(
-    person_id: str, include_speech_samples: bool = False, uid: str = Depends(auth.get_current_user_uid)
-):
+def get_single_person(request: Request, person_id: str, include_speech_samples: bool = False):
+    uid = request.state.uid
     person = get_person(uid, person_id)
     if not person:
         raise HTTPException(status_code=404, detail="Person not found")
@@ -362,7 +371,8 @@ def get_single_person(
 
 
 @router.get('/v1/users/people', tags=['v1'], response_model=List[Person])
-def get_all_people(include_speech_samples: bool = True, uid: str = Depends(auth.get_current_user_uid)):
+def get_all_people(request: Request, include_speech_samples: bool = True):
+    uid = request.state.uid
     logger.info(f'get_all_people {include_speech_samples}')
     people = get_people(uid)
     if include_speech_samples:
@@ -375,27 +385,26 @@ def get_all_people(include_speech_samples: bool = True, uid: str = Depends(auth.
 
 @router.patch('/v1/users/people/{person_id}/name', tags=['v1'])
 def update_person_name(
+    request: Request,
     person_id: str,
-    value: str,  # = Field(min_length=2, max_length=40),
-    uid: str = Depends(auth.get_current_user_uid),
+    value: str,  # = Field(min_length=2, max_length=40)
 ):
+    uid = request.state.uid
     update_person(uid, person_id, value)
     return {'status': 'ok'}
 
 
 @router.delete('/v1/users/people/{person_id}', tags=['v1'], status_code=204)
-def delete_person_endpoint(person_id: str, uid: str = Depends(auth.get_current_user_uid)):
+def delete_person_endpoint(request: Request, person_id: str):
+    uid = request.state.uid
     delete_person(uid, person_id)
     delete_user_person_speech_samples(uid, person_id)
     return {'status': 'ok'}
 
 
 @router.delete('/v1/users/people/{person_id}/speech-samples/{sample_index}', tags=['v1'])
-def delete_person_speech_sample_endpoint(
-    person_id: str,
-    sample_index: int,
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def delete_person_speech_sample_endpoint(request: Request, person_id: str, sample_index: int):
+    uid = request.state.uid
     """Delete a specific speech sample for a person by index."""
     person = get_person(uid, person_id)
     if not person:
@@ -427,7 +436,8 @@ def delete_person_speech_sample_endpoint(
 
 
 @router.delete('/v1/joan/{memory_id}/followup-question', tags=['v1'], status_code=204)
-def delete_person_endpoint(memory_id: str, uid: str = Depends(auth.get_current_user_uid)):
+def delete_person_endpoint(request: Request, memory_id: str):
+    uid = request.state.uid
     if memory_id == '0':
         memory = get_in_progress_conversation(uid)
         if not memory:
@@ -449,19 +459,17 @@ def delete_person_endpoint(memory_id: str, uid: str = Depends(auth.get_current_u
 
 @router.post('/v1/users/analytics/memory_summary', tags=['v1'])
 def set_memory_summary_rating(
+    request: Request,
     memory_id: str,
     value: int,  # 0, 1, -1 (shown)
-    uid: str = Depends(auth.get_current_user_uid),
 ):
+    uid = request.state.uid
     set_conversation_summary_rating_score(uid, memory_id, value)
     return {'status': 'ok'}
 
 
 @router.get('/v1/users/analytics/memory_summary', tags=['v1'])
-def get_memory_summary_rating(
-    memory_id: str,
-    _: str = Depends(auth.get_current_user_uid),
-):
+def get_memory_summary_rating(memory_id: str):
     rating = get_conversation_summary_rating_score(memory_id)
     # TODO: later ask reason, a set of options, if user says good, whats the best, if bad, whats the worst
     if not rating:
@@ -471,11 +479,12 @@ def get_memory_summary_rating(
 
 @router.post('/v1/users/analytics/chat_message', tags=['v1'])
 def set_chat_message_analytics(
+    request: Request,
     message_id: str,
     value: int,
     reason: str = None,  # Reason for thumbs down (e.g. 'too_verbose', 'incorrect_or_hallucination')
-    uid: str = Depends(auth.get_current_user_uid),
 ):
+    uid = request.state.uid
     """
     Submit feedback rating for a chat message.
 
@@ -517,10 +526,7 @@ def set_chat_message_analytics(
 
                 # Submit feedback to LangSmith (non-blocking, errors are logged)
                 submit_langsmith_feedback(
-                    run_id=langsmith_run_id,
-                    score=score,
-                    key="chat_message_rating",
-                    comment=comment,
+                    run_id=langsmith_run_id, score=score, key="chat_message_rating", comment=comment
                 )
     except Exception as e:
         # Don't fail the request if LangSmith feedback fails
@@ -535,7 +541,8 @@ def set_chat_message_analytics(
 
 
 @router.get('/v1/users/language', tags=['v1'])
-def get_user_language(uid: str = Depends(auth.get_current_user_uid)):
+def get_user_language(request: Request):
+    uid = request.state.uid
     """Get the user's preferred language."""
     language = get_user_language_preference(uid)
     if not language:
@@ -544,7 +551,8 @@ def get_user_language(uid: str = Depends(auth.get_current_user_uid)):
 
 
 @router.patch('/v1/users/language', tags=['v1'])
-def set_user_language(data: dict, uid: str = Depends(auth.get_current_user_uid)):
+def set_user_language(request: Request, data: dict):
+    uid = request.state.uid
     """Set the user's preferred language (e.g., 'en', 'vi', etc.)."""
     language = data.get('language')
     if not language:
@@ -572,16 +580,16 @@ class TranscriptionPreferencesUpdate(BaseModel):
 
 
 @router.get('/v1/users/transcription-preferences', tags=['v1'], response_model=TranscriptionPreferencesResponse)
-def get_transcription_preferences_endpoint(uid: str = Depends(auth.get_current_user_uid)):
+def get_transcription_preferences_endpoint(request: Request):
+    uid = request.state.uid
     """Get user's transcription preferences (single language mode, vocabulary)."""
     prefs = get_user_transcription_preferences(uid)
     return prefs
 
 
 @router.patch('/v1/users/transcription-preferences', tags=['v1'])
-def update_transcription_preferences_endpoint(
-    data: TranscriptionPreferencesUpdate, uid: str = Depends(auth.get_current_user_uid)
-):
+def update_transcription_preferences_endpoint(request: Request, data: TranscriptionPreferencesUpdate):
+    uid = request.state.uid
     """
     Update user's transcription preferences.
 
@@ -598,9 +606,8 @@ def update_transcription_preferences_endpoint(
 
 
 @router.post('/v1/users/migration/requests', tags=['v1'])
-def handle_migration_requests(
-    request: Union[MigrationRequest, MigrationTargetRequest], uid: str = Depends(auth.get_current_user_uid)
-):
+def handle_migration_requests(request: Union[MigrationRequest, MigrationTargetRequest]):
+    uid = request.state.uid
     """
     Handles data migration requests.
     - If 'id' and 'type' are present, it migrates a single object.
@@ -640,7 +647,8 @@ def handle_migration_requests(
 
 
 @router.get('/v1/users/migration/requests', tags=['v1'])
-def get_migration_requests(target_level: str, uid: str = Depends(auth.get_current_user_uid)):
+def get_migration_requests(request: Request, target_level: str):
+    uid = request.state.uid
     """Checks which documents need to be migrated to the target level."""
     if target_level != 'enhanced':
         raise HTTPException(status_code=400, detail="Invalid target_level. Only migration to 'enhanced' is supported.")
@@ -653,9 +661,8 @@ def get_migration_requests(target_level: str, uid: str = Depends(auth.get_curren
 
 
 @router.post('/v1/users/migration/batch-requests', tags=['v1'])
-def handle_batch_migration_requests(
-    batch_request: BatchMigrationRequest, uid: str = Depends(auth.get_current_user_uid)
-):
+def handle_batch_migration_requests(request: Request, batch_request: BatchMigrationRequest):
+    uid = request.state.uid
     """Migrates a batch of data objects to the target protection level."""
     errors = []
 
@@ -689,7 +696,8 @@ def handle_batch_migration_requests(
 
 
 @router.post('/v1/users/migration/requests/data-protection-level/finalize', tags=['v1'])
-def finalize_migration_request(request: MigrationTargetRequest, uid: str = Depends(auth.get_current_user_uid)):
+def finalize_migration_request(request: MigrationTargetRequest):
+    uid = request.state.uid
     """Finalizes the migration by setting the user's global protection level."""
     if request.target_level != 'enhanced':
         raise HTTPException(status_code=400, detail="Invalid target_level. Only migration to 'enhanced' is supported.")
@@ -701,9 +709,9 @@ def finalize_migration_request(request: MigrationTargetRequest, uid: str = Depen
 
 @router.put('/v1/users/preferences/app', tags=['v1'])
 def set_preferred_app_for_user(
-    app_id: str = Query(..., description="The ID of the app to set as preferred"),
-    uid: str = Depends(auth.get_current_user_uid),
+    request: Request, app_id: str = Query(..., description="The ID of the app to set as preferred")
 ):
+    uid = request.state.uid
     """Sets the user's preferred app for future processing."""
 
     app_id_to_set = app_id
@@ -727,7 +735,8 @@ def set_preferred_app_for_user(
 
 
 @router.get('/v1/users/training-data-opt-in', tags=['v1'])
-def get_training_data_opt_in_status(uid: str = Depends(auth.get_current_user_uid)):
+def get_training_data_opt_in_status(request: Request):
+    uid = request.state.uid
     """Get the user's training data opt-in status."""
     opt_in_data = get_user_training_data_opt_in(uid)
     if not opt_in_data:
@@ -736,7 +745,8 @@ def get_training_data_opt_in_status(uid: str = Depends(auth.get_current_user_uid
 
 
 @router.post('/v1/users/training-data-opt-in', tags=['v1'])
-def set_training_data_opt_in_status(uid: str = Depends(auth.get_current_user_uid)):
+def set_training_data_opt_in_status(request: Request):
+    uid = request.state.uid
     """Opt-in for training data program. User's request will be reviewed."""
     set_user_training_data_opt_in(uid, 'pending_review')
 
@@ -756,10 +766,8 @@ def set_training_data_opt_in_status(uid: str = Depends(auth.get_current_user_uid
 
 
 @router.get('/v1/users/me/usage', tags=['v1'], response_model=UserUsageResponse)
-def get_user_usage_stats_endpoint(
-    uid: str = Depends(auth.get_current_user_uid),
-    period: UsagePeriod = UsagePeriod.TODAY,
-):
+def get_user_usage_stats_endpoint(request: Request, period: UsagePeriod = UsagePeriod.TODAY):
+    uid = request.state.uid
     """Gets daily and monthly usage stats for the authenticated user."""
     stats = user_usage_db.get_current_user_usage(uid, period.value)
     return stats
@@ -774,7 +782,8 @@ class BYOKActivateRequest(BaseModel):
 
 
 @router.post('/v1/users/me/byok-active', tags=['v1'])
-def activate_byok_endpoint(data: BYOKActivateRequest, uid: str = Depends(auth.get_current_user_uid_no_byok_validation)):
+def activate_byok_endpoint(request: Request, data: BYOKActivateRequest):
+    uid = request.state.uid
     """Flip the user onto the BYOK free plan.
 
     The client sends SHA-256 fingerprints of the 4 provider keys so we can
@@ -783,10 +792,7 @@ def activate_byok_endpoint(data: BYOKActivateRequest, uid: str = Depends(auth.ge
     """
     missing = _BYOK_REQUIRED_PROVIDERS - set(data.fingerprints.keys())
     if missing:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Missing fingerprints for providers: {sorted(missing)}",
-        )
+        raise HTTPException(status_code=400, detail=f"Missing fingerprints for providers: {sorted(missing)}")
     for provider, fp in data.fingerprints.items():
         if provider not in _BYOK_REQUIRED_PROVIDERS:
             raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
@@ -800,7 +806,8 @@ def activate_byok_endpoint(data: BYOKActivateRequest, uid: str = Depends(auth.ge
 
 
 @router.delete('/v1/users/me/byok-active', tags=['v1'])
-def deactivate_byok_endpoint(uid: str = Depends(auth.get_current_user_uid_no_byok_validation)):
+def deactivate_byok_endpoint(request: Request):
+    uid = request.state.uid
     """Drop the user off the BYOK free plan (keys were cleared client-side)."""
     users_db.clear_byok_active(uid)
     invalidate_byok_state_cache(uid)
@@ -814,22 +821,20 @@ def _byok_unlimited_subscription() -> Subscription:
         status=SubscriptionStatus.active,
         features=["byok"],
         limits=PlanLimits(
-            transcription_seconds=None,
-            words_transcribed=None,
-            insights_gained=None,
-            memories_created=None,
+            transcription_seconds=None, words_transcribed=None, insights_gained=None, memories_created=None
         ),
     )
 
 
 @router.get('/v1/users/me/subscription', tags=['v1'], response_model=UserSubscriptionResponse)
 def get_user_subscription_endpoint(
+    request: Request,
     # Keep reachable even when BYOK fingerprints drift — broken-BYOK users
     # must still see their plan so they can recover.
-    uid: str = Depends(auth.get_current_user_uid_no_byok_validation),
     x_app_platform: Optional[str] = Header(None, alias='X-App-Platform'),
     x_app_version: Optional[str] = Header(None, alias='X-App-Version'),
 ):
+    uid = request.state.uid
     """Gets the user's subscription plan and usage."""
     # BYOK free plan: user supplies their own OpenAI/Anthropic/Gemini/Deepgram keys.
     # Only return unlimited when the request actually carries BYOK headers (desktop).
@@ -860,10 +865,7 @@ def get_user_subscription_endpoint(
             plan=PlanType.unlimited,
             status=SubscriptionStatus.active,
             limits=PlanLimits(
-                transcription_seconds=None,
-                words_transcribed=None,
-                insights_gained=None,
-                memories_created=None,
+                transcription_seconds=None, words_transcribed=None, insights_gained=None, memories_created=None
             ),
         )
         return UserSubscriptionResponse(
@@ -1037,9 +1039,10 @@ def get_user_subscription_endpoint(
 
 @router.get('/v1/users/me/usage-quota', tags=['users'], response_model=ChatUsageQuota)
 def get_user_chat_usage_quota(
-    uid: str = Depends(auth.get_current_user_uid),
+    request: Request,
     x_app_platform: Optional[str] = Header(None, alias='X-App-Platform'),
 ):
+    uid = request.state.uid
     """Current-month chat usage for the user, plus their plan's cap.
 
     Used by the desktop app. Mobile uses the subscription endpoint instead.
@@ -1095,7 +1098,8 @@ class DailySummarySettingsUpdate(BaseModel):
 
 
 @router.get('/v1/users/daily-summary-settings', tags=['v1'], response_model=DailySummarySettingsResponse)
-def get_daily_summary_settings(uid: str = Depends(auth.get_current_user_uid)):
+def get_daily_summary_settings(request: Request):
+    uid = request.state.uid
     """
     Get user's daily summary notification settings.
 
@@ -1114,7 +1118,8 @@ def get_daily_summary_settings(uid: str = Depends(auth.get_current_user_uid)):
 
 
 @router.patch('/v1/users/daily-summary-settings', tags=['v1'])
-def update_daily_summary_settings(data: DailySummarySettingsUpdate, uid: str = Depends(auth.get_current_user_uid)):
+def update_daily_summary_settings(request: Request, data: DailySummarySettingsUpdate):
+    uid = request.state.uid
     """
     Update user's daily summary notification settings.
 
@@ -1146,7 +1151,8 @@ class TestDailySummaryRequest(BaseModel):
 
 
 @router.post('/v1/users/daily-summary-settings/test', tags=['v1'])
-def test_daily_summary(request: TestDailySummaryRequest = None, uid: str = Depends(auth.get_current_user_uid)):
+def test_daily_summary(request: TestDailySummaryRequest = None):
+    uid = request.state.uid
     """
     Test endpoint to manually trigger daily summary for the authenticated user.
     This bypasses the time check and sends a summary immediately.
@@ -1254,9 +1260,8 @@ def test_daily_summary(request: TestDailySummaryRequest = None, uid: str = Depen
 
 
 @router.get('/v1/users/daily-summaries', tags=['v1'])
-def get_daily_summaries(
-    limit: int = Query(30, ge=1, le=100), offset: int = Query(0, ge=0), uid: str = Depends(auth.get_current_user_uid)
-):
+def get_daily_summaries(request: Request, limit: int = Query(30, ge=1, le=100), offset: int = Query(0, ge=0)):
+    uid = request.state.uid
     """
     Get list of daily summaries for the authenticated user.
     Returns summaries in reverse chronological order.
@@ -1266,7 +1271,8 @@ def get_daily_summaries(
 
 
 @router.get('/v1/users/daily-summaries/{summary_id}', tags=['v1'])
-def get_daily_summary(summary_id: str, uid: str = Depends(auth.get_current_user_uid)):
+def get_daily_summary(request: Request, summary_id: str):
+    uid = request.state.uid
     """
     Get a single daily summary by ID.
     """
@@ -1277,7 +1283,8 @@ def get_daily_summary(summary_id: str, uid: str = Depends(auth.get_current_user_
 
 
 @router.delete('/v1/users/daily-summaries/{summary_id}', tags=['v1'])
-def delete_daily_summary(summary_id: str, uid: str = Depends(auth.get_current_user_uid)):
+def delete_daily_summary(request: Request, summary_id: str):
+    uid = request.state.uid
     """
     Delete a daily summary by ID.
     """
@@ -1304,7 +1311,8 @@ class MentorNotificationSettingsUpdate(BaseModel):
 
 
 @router.get('/v1/users/mentor-notification-settings', tags=['v1'], response_model=MentorNotificationSettingsResponse)
-def get_mentor_notification_settings(uid: str = Depends(auth.get_current_user_uid)):
+def get_mentor_notification_settings(request: Request):
+    uid = request.state.uid
     """
     Get user's mentor notification frequency preference.
 
@@ -1320,9 +1328,8 @@ def get_mentor_notification_settings(uid: str = Depends(auth.get_current_user_ui
 
 
 @router.patch('/v1/users/mentor-notification-settings', tags=['v1'])
-def update_mentor_notification_settings(
-    data: MentorNotificationSettingsUpdate, uid: str = Depends(auth.get_current_user_uid)
-):
+def update_mentor_notification_settings(request: Request, data: MentorNotificationSettingsUpdate):
+    uid = request.state.uid
     """
     Update user's mentor notification frequency preference.
 
@@ -1345,10 +1352,8 @@ def update_mentor_notification_settings(
 
 
 @router.get('/v1/users/me/llm-usage', tags=['users'])
-def get_llm_usage(
-    days: int = Query(default=30, ge=1, le=365),
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def get_llm_usage(request: Request, days: int = Query(default=30, ge=1, le=365)):
+    uid = request.state.uid
     """
     Get LLM token usage summary for the current user.
 
@@ -1366,10 +1371,9 @@ def get_llm_usage(
 
 @router.get('/v1/users/me/llm-usage/top-features', tags=['users'])
 def get_llm_top_features(
-    days: int = Query(default=30, ge=1, le=365),
-    limit: int = Query(default=3, ge=1, le=10),
-    uid: str = Depends(auth.get_current_user_uid),
+    request: Request, days: int = Query(default=30, ge=1, le=365), limit: int = Query(default=3, ge=1, le=10)
 ):
+    uid = request.state.uid
     """
     Get top features by LLM token usage for the current user.
 
@@ -1385,10 +1389,12 @@ def _json_default(obj):
 
 
 @router.get('/v1/users/export', tags=['v1'])
-async def export_all_user_data(uid: str = Depends(auth.get_current_user_uid)):
+async def export_all_user_data(request: Request):
+    uid = request.state.uid
     """Export all user data for GDPR/CCPA compliance. Streams response to avoid timeouts."""
 
-    def generate():
+    def generate(request: Request):
+        uid = request.state.uid
         profile = get_user_profile(uid)
         memories_list = memories_db.get_memories(uid, limit=10000, offset=0)
         people = get_people(uid)
@@ -1443,15 +1449,14 @@ class UpdateNotificationSettingsRequest(BaseModel):
 
 
 @router.get('/v1/users/notification-settings', tags=['users'])
-def get_notification_settings(uid: str = Depends(auth.get_current_user_uid)):
+def get_notification_settings(request: Request):
+    uid = request.state.uid
     return users_db.get_notification_settings(uid)
 
 
 @router.patch('/v1/users/notification-settings', tags=['users'])
-def update_notification_settings(
-    request: UpdateNotificationSettingsRequest,
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def update_notification_settings(request: UpdateNotificationSettingsRequest):
+    uid = request.state.uid
     return users_db.update_notification_settings(uid, enabled=request.enabled, frequency=request.frequency)
 
 
@@ -1519,15 +1524,14 @@ class UpdateAssistantSettingsRequest(BaseModel):
 
 
 @router.get('/v1/users/assistant-settings', tags=['users'])
-def get_assistant_settings(uid: str = Depends(auth.get_current_user_uid)):
+def get_assistant_settings(request: Request):
+    uid = request.state.uid
     return users_db.get_assistant_settings(uid)
 
 
 @router.patch('/v1/users/assistant-settings', tags=['users'])
-def update_assistant_settings(
-    request: UpdateAssistantSettingsRequest,
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def update_assistant_settings(request: UpdateAssistantSettingsRequest):
+    uid = request.state.uid
     settings = request.model_dump(exclude_unset=True)
     return users_db.update_assistant_settings(uid, settings)
 
@@ -1544,15 +1548,14 @@ class UpdateAIUserProfileRequest(BaseModel):
 
 
 @router.get('/v1/users/ai-profile', tags=['users'])
-def get_ai_profile(uid: str = Depends(auth.get_current_user_uid)):
+def get_ai_profile(request: Request):
+    uid = request.state.uid
     return users_db.get_ai_user_profile(uid)
 
 
 @router.patch('/v1/users/ai-profile', tags=['users'])
-def update_ai_profile(
-    request: UpdateAIUserProfileRequest,
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def update_ai_profile(request: UpdateAIUserProfileRequest):
+    uid = request.state.uid
     return users_db.update_ai_user_profile(
         uid,
         profile_text=request.profile_text,
@@ -1577,10 +1580,8 @@ class RecordLlmUsageBucketRequest(BaseModel):
 
 
 @router.post('/v1/users/me/llm-usage', tags=['users'])
-def record_llm_usage_bucket(
-    request: RecordLlmUsageBucketRequest,
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def record_llm_usage_bucket(request: RecordLlmUsageBucketRequest):
+    uid = request.state.uid
     llm_usage_db.record_llm_usage_bucket(
         uid,
         input_tokens=request.input_tokens,
@@ -1595,6 +1596,7 @@ def record_llm_usage_bucket(
 
 
 @router.get('/v1/users/me/llm-usage/total', tags=['users'])
-def get_total_llm_cost(uid: str = Depends(auth.get_current_user_uid)):
+def get_total_llm_cost(request: Request):
+    uid = request.state.uid
     total = llm_usage_db.get_total_llm_cost(uid)
     return {'total_cost_usd': total}

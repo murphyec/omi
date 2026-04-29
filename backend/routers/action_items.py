@@ -3,7 +3,7 @@ import uuid
 
 from utils.executors import critical_executor
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import Request, APIRouter, Depends, HTTPException, Query
 from typing import Optional, List
 from datetime import datetime, timezone
 
@@ -99,7 +99,8 @@ class BatchUpdateActionItemsRequest(BaseModel):
 
 
 @router.patch("/v1/action-items/batch", tags=['action-items'])
-def batch_update_action_items(request: BatchUpdateActionItemsRequest, uid: str = Depends(auth.get_current_user_uid)):
+def batch_update_action_items(request: BatchUpdateActionItemsRequest):
+    uid = request.state.uid
     """Batch update sort_order and indent_level for multiple action items."""
     action_items_db.batch_update_action_items(uid, request.items)
     return {"status": "ok", "updated_count": len(request.items)}
@@ -125,10 +126,8 @@ class SyncBatchRequest(BaseModel):
 
 
 @router.get("/v1/action-items/pending-sync", tags=['action-items'])
-def get_pending_sync_items(
-    platform: str = Query('apple_reminders', description="Sync platform"),
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def get_pending_sync_items(request: Request, platform: str = Query('apple_reminders', description="Sync platform")):
+    uid = request.state.uid
     """Get action items that need sync: pending export + already synced items for bidirectional sync."""
     result = action_items_db.get_pending_apple_reminders_sync(uid)
     pending_export = [item for item in result["pending_export"] if not item.get('is_locked', False)]
@@ -140,7 +139,8 @@ def get_pending_sync_items(
 
 
 @router.patch("/v1/action-items/sync-batch", tags=['action-items'])
-def sync_batch_update(request: SyncBatchRequest, uid: str = Depends(auth.get_current_user_uid)):
+def sync_batch_update(request: SyncBatchRequest):
+    uid = request.state.uid
     """Batch update action items during reminders sync. Single Firestore batch commit."""
     if not request.items:
         return {"status": "ok", "updated_count": 0}
@@ -181,8 +181,7 @@ def sync_batch_update(request: SyncBatchRequest, uid: str = Depends(auth.get_cur
     desc_updates = [u for u in updates if 'description' in u['data']]
     if desc_updates:
         upsert_action_item_vectors_batch(
-            uid,
-            [{'action_item_id': u['id'], 'description': u['data']['description']} for u in desc_updates],
+            uid, [{'action_item_id': u['id'], 'description': u['data']['description']} for u in desc_updates]
         )
 
     return {"status": "ok", "updated_count": len(updates)}
@@ -194,7 +193,8 @@ def sync_batch_update(request: SyncBatchRequest, uid: str = Depends(auth.get_cur
 
 
 @router.post("/v1/action-items", response_model=ActionItemResponse, tags=['action-items'])
-def create_action_item(request: CreateActionItemRequest, uid: str = Depends(auth.get_current_user_uid)):
+def create_action_item(request: CreateActionItemRequest):
+    uid = request.state.uid
     """Create a new action item."""
     action_item_data = {
         'description': request.description,
@@ -220,7 +220,8 @@ def create_action_item(request: CreateActionItemRequest, uid: str = Depends(auth
 
     upsert_action_item_vector(uid, action_item_id, request.description)
 
-    def _run_auto_sync():
+    def _run_auto_sync(request: Request):
+        uid = request.state.uid
         asyncio.run(auto_sync_action_item(uid, {"id": action_item_id, **action_item_data}, skip_apple_reminders=True))
 
     critical_executor.submit(_run_auto_sync)
@@ -238,7 +239,6 @@ def get_action_items(
     end_date: Optional[datetime] = Query(None, description="Filter by creation end date (inclusive)"),
     due_start_date: Optional[datetime] = Query(None, description="Filter by due start date (inclusive)"),
     due_end_date: Optional[datetime] = Query(None, description="Filter by due end date (inclusive)"),
-    uid: str = Depends(auth.get_current_user_uid),
 ):
     """Get action items for the current user."""
     action_items = action_items_db.get_action_items(
@@ -280,10 +280,11 @@ def get_action_items(
 
 @router.get("/v1/action-items/search", tags=['action-items'])
 def search_action_items(
+    request: Request,
     query: str = Query(..., min_length=1, description="Search query"),
     limit: int = Query(10, ge=1, le=50, description="Maximum results"),
-    uid: str = Depends(auth.get_current_user_uid),
 ):
+    uid = request.state.uid
     """Semantic search across action items using vector similarity."""
     action_item_ids = search_action_items_by_vector(uid, query, limit=limit)
     if not action_item_ids:
@@ -295,7 +296,8 @@ def search_action_items(
 
 
 @router.get("/v1/action-items/{action_item_id}", response_model=ActionItemResponse, tags=['action-items'])
-def get_action_item(action_item_id: str, uid: str = Depends(auth.get_current_user_uid)):
+def get_action_item(request: Request, action_item_id: str):
+    uid = request.state.uid
     """Get a specific action item by ID."""
     action_item = _get_valid_action_item(uid, action_item_id)
 
@@ -306,9 +308,8 @@ def get_action_item(action_item_id: str, uid: str = Depends(auth.get_current_use
 
 
 @router.patch("/v1/action-items/{action_item_id}", response_model=ActionItemResponse, tags=['action-items'])
-def update_action_item(
-    action_item_id: str, request: UpdateActionItemRequest, uid: str = Depends(auth.get_current_user_uid)
-):
+def update_action_item(action_item_id: str, request: UpdateActionItemRequest):
+    uid = request.state.uid
     """Update an action item."""
     # Check if action item exists
     existing_item = _get_valid_action_item(uid, action_item_id)
@@ -371,10 +372,9 @@ def update_action_item(
 
 @router.patch("/v1/action-items/{action_item_id}/completed", response_model=ActionItemResponse, tags=['action-items'])
 def toggle_action_item_completion(
-    action_item_id: str,
-    completed: bool = Query(description="Whether to mark as completed or not"),
-    uid: str = Depends(auth.get_current_user_uid),
+    request: Request, action_item_id: str, completed: bool = Query(description="Whether to mark as completed or not")
 ):
+    uid = request.state.uid
     """Mark an action item as completed or uncompleted."""
     # Check if action item exists
     existing_item = _get_valid_action_item(uid, action_item_id)
@@ -397,17 +397,14 @@ def toggle_action_item_completion(
             recipient_name = get_user_display_name(uid)
             desc = existing_item.get('description', '')
             description = (desc[:57] + '...') if len(desc) > 60 else desc
-            send_notification(
-                sender_uid,
-                "Task completed",
-                f"{recipient_name} completed: {description}",
-            )
+            send_notification(sender_uid, "Task completed", f"{recipient_name} completed: {description}")
 
     return ActionItemResponse(**updated_item)
 
 
 @router.delete("/v1/action-items/{action_item_id}", status_code=204, tags=['action-items'])
-def delete_action_item(action_item_id: str, uid: str = Depends(auth.get_current_user_uid)):
+def delete_action_item(request: Request, action_item_id: str):
+    uid = request.state.uid
     """Delete an action item."""
     _get_valid_action_item(uid, action_item_id)
     success = action_items_db.delete_action_item(uid, action_item_id)
@@ -449,7 +446,8 @@ def batch_delete_action_items(request: BatchDeleteActionItemsRequest, uid: str =
 
 
 @router.get("/v1/conversations/{conversation_id}/action-items", tags=['action-items'])
-def get_conversation_action_items(conversation_id: str, uid: str = Depends(auth.get_current_user_uid)):
+def get_conversation_action_items(request: Request, conversation_id: str):
+    uid = request.state.uid
     """Get all action items for a specific conversation."""
     conversation = conversations_db.get_conversation(uid, conversation_id)
     if not conversation:
@@ -463,7 +461,8 @@ def get_conversation_action_items(conversation_id: str, uid: str = Depends(auth.
 
 
 @router.delete("/v1/conversations/{conversation_id}/action-items", status_code=204, tags=['action-items'])
-def delete_conversation_action_items(conversation_id: str, uid: str = Depends(auth.get_current_user_uid)):
+def delete_conversation_action_items(request: Request, conversation_id: str):
+    uid = request.state.uid
     """Delete all action items for a specific conversation."""
     existing = action_items_db.get_action_items_by_conversation(uid, conversation_id)
     existing_ids = [item['id'] for item in existing]
@@ -477,9 +476,8 @@ def delete_conversation_action_items(conversation_id: str, uid: str = Depends(au
 
 
 @router.post("/v1/action-items/batch", tags=['action-items'])
-def create_action_items_batch(
-    action_items: List[CreateActionItemRequest], uid: str = Depends(auth.get_current_user_uid)
-):
+def create_action_items_batch(request: Request, action_items: List[CreateActionItemRequest]):
+    uid = request.state.uid
     """Create multiple action items in a batch."""
     if not action_items:
         return {"action_items": [], "created_count": 0}
@@ -539,7 +537,8 @@ class AcceptSharedTasksRequest(BaseModel):
 
 
 @router.post("/v1/action-items/share", tags=['action-items'])
-def share_action_items(request: ShareTasksRequest, uid: str = Depends(auth.get_current_user_uid)):
+def share_action_items(request: ShareTasksRequest):
+    uid = request.state.uid
     """Create a shareable link for selected action items."""
     # Validate all task_ids belong to user and are not locked
     for task_id in request.task_ids:
@@ -562,7 +561,8 @@ def share_action_items(request: ShareTasksRequest, uid: str = Depends(auth.get_c
 
 
 @router.get("/v1/action-items/shared/{token}", tags=['action-items'])
-def get_shared_action_items(token: str):
+def get_shared_action_items(request: Request, token: str):
+    uid = request.state.uid
     """Public endpoint — get shared task preview (no auth required)."""
     share_data = redis_db.get_task_share(token)
     if not share_data:
@@ -591,7 +591,8 @@ def get_shared_action_items(token: str):
 
 
 @router.post("/v1/action-items/accept", tags=['action-items'])
-def accept_shared_action_items(request: AcceptSharedTasksRequest, uid: str = Depends(auth.get_current_user_uid)):
+def accept_shared_action_items(request: AcceptSharedTasksRequest):
+    uid = request.state.uid
     """Save shared tasks to the recipient's task list."""
     share_data = redis_db.get_task_share(request.token)
     if not share_data:

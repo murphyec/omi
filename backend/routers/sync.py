@@ -67,11 +67,7 @@ from utils.fair_use import (
 )
 from utils.speaker_assignment import process_speaker_assigned_segments
 from utils.speaker_identification import detect_speaker_from_text
-from utils.stt.speaker_embedding import (
-    extract_embedding_from_bytes,
-    compare_embeddings,
-    SPEAKER_MATCH_THRESHOLD,
-)
+from utils.stt.speaker_embedding import extract_embedding_from_bytes, compare_embeddings, SPEAKER_MATCH_THRESHOLD
 from utils.byok import set_byok_keys
 from utils.subscription import has_transcription_credits
 
@@ -175,10 +171,8 @@ def _precache_audio_file(uid: str, conversation_id: str, audio_file: dict, fill_
 
 
 @router.post("/v1/sync/audio/{conversation_id}/precache", tags=['v1'])
-def precache_conversation_audio_endpoint(
-    conversation_id: str,
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def precache_conversation_audio_endpoint(request: Request, conversation_id: str):
+    uid = request.state.uid
     """
     Warm the audio cache for a conversation.
     Returns immediately - caching happens in background.
@@ -194,7 +188,8 @@ def precache_conversation_audio_endpoint(
         return {"status": "no_audio", "message": "No audio files in conversation"}
 
     # Start background parallel pre-caching for all audio files using storage_executor
-    def _precache_all_parallel():
+    def _precache_all_parallel(request: Request):
+        uid = request.state.uid
         logger.info(f"Pre-caching all {len(audio_files)} audio files for conversation {conversation_id} (parallel)")
         futures = [
             submit_with_context(storage_executor, _precache_audio_file, uid, conversation_id, af) for af in audio_files
@@ -212,10 +207,8 @@ def precache_conversation_audio_endpoint(
 
 
 @router.get("/v1/sync/audio/{conversation_id}/urls", tags=['v1'])
-def get_audio_signed_urls_endpoint(
-    conversation_id: str,
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def get_audio_signed_urls_endpoint(request: Request, conversation_id: str):
+    uid = request.state.uid
     """
     Get signed URLs for all audio files in a conversation.
     Synchronously caches the first uncached file for immediate playback.
@@ -317,11 +310,7 @@ def get_audio_signed_urls_endpoint(
 
 @router.get("/v1/sync/audio/{conversation_id}/{audio_file_id}", tags=['v1'])
 def download_audio_file_endpoint(
-    conversation_id: str,
-    audio_file_id: str,
-    request: Request,
-    format: str = Query(default="wav", regex="^(wav|pcm)$"),
-    uid: str = Depends(auth.get_current_user_uid),
+    conversation_id: str, audio_file_id: str, request: Request, format: str = Query(default="wav", regex="^(wav|pcm)$")
 ):
     """
     Download audio file from private cloud sync in the specified format.
@@ -706,11 +695,7 @@ def _reprocess_conversation_after_update(uid: str, conversation_id: str, languag
     conversation = deserialize_conversation(conversation_data)
 
     process_conversation(
-        uid=uid,
-        language_code=language or 'en',
-        conversation=conversation,
-        force_process=True,
-        is_reprocess=True,
+        uid=uid, language_code=language or 'en', conversation=conversation, force_process=True, is_reprocess=True
     )
 
     logger.info(f'Successfully reprocessed conversation {conversation_id}')
@@ -843,9 +828,7 @@ def identify_speakers_for_segments(
         # Note: matched_person_ids assumes diarization is correct (one person = one speaker).
         # If diarization fragments one person across speaker IDs, only the best match wins.
         sorted_speakers = sorted(
-            speaker_segments.items(),
-            key=lambda kv: max(s.end - s.start for s in kv[1]),
-            reverse=True,
+            speaker_segments.items(), key=lambda kv: max(s.end - s.start for s in kv[1]), reverse=True
         )
 
         for speaker_id, segments in sorted_speakers:
@@ -912,11 +895,7 @@ def identify_speakers_for_segments(
 
     # Apply all assignments to segments
     if speaker_to_person_map or segment_person_assignment_map:
-        process_speaker_assigned_segments(
-            transcript_segments,
-            segment_person_assignment_map,
-            speaker_to_person_map,
-        )
+        process_speaker_assigned_segments(transcript_segments, segment_person_assignment_map, speaker_to_person_map)
 
 
 def process_segment(
@@ -1100,19 +1079,17 @@ async def sync_local_files(
     request: Request,
     response: Response,
     files: List[UploadFile] = File(...),
-    uid: str = Depends(auth.get_current_user_uid),
-    byok_keys: dict = Depends(auth.get_validated_byok_keys_http),
     conversation_id: str = Query(
         None, description="Target conversation ID to attach audio to (auto-sync from live capture)"
     ),
 ):
-    if byok_keys:
-        set_byok_keys(byok_keys)
+    uid = request.state.uid
     logger.warning(
         f'sync: deprecated v1 sync-local-files called uid={uid} files={len(files)} '
         f'user_agent={request.headers.get("user-agent", "")}'
     )
     response.headers.update(_V1_DEPRECATION_HEADERS)
+
     # Pre-check gates (#5854)
     if is_hard_restricted(uid):
         raise HTTPException(
@@ -1494,7 +1471,8 @@ def _run_full_pipeline_background(
         segment_errors = []
         segment_lock = threading.Lock()
 
-        def _process_one_segment(path):
+        def _process_one_segment(request: Request, path):
+            uid = request.state.uid
             process_segment(
                 path,
                 uid,
@@ -1594,20 +1572,18 @@ def _run_full_pipeline_background(
 
 @router.post("/v2/sync-local-files")
 async def sync_local_files_v2(
+    request: Request,
     files: List[UploadFile] = File(...),
-    uid: str = Depends(auth.get_current_user_uid),
-    byok_keys: dict = Depends(auth.get_validated_byok_keys_http),
     conversation_id: str = Query(
         None, description="Target conversation ID to attach audio to (auto-sync from live capture)"
     ),
 ):
+    uid = request.state.uid
     """
     Async version of sync-local-files. Saves raw files and returns 202
     immediately, then runs the full pipeline (decode → VAD → STT → LLM) in
     a background thread. The app polls GET /v2/sync-local-files/{job_id}.
     """
-    if byok_keys:
-        set_byok_keys(byok_keys)
     # Pre-check gates (same as v1)
     if is_hard_restricted(uid):
         raise HTTPException(status_code=429, detail="Account temporarily restricted due to fair-use policy")
@@ -1679,7 +1655,8 @@ async def sync_local_files_v2(
 
 
 @router.get("/v2/sync-local-files/{job_id}")
-async def get_sync_job_status(job_id: str, uid: str = Depends(auth.get_current_user_uid)):
+async def get_sync_job_status(request: Request, job_id: str):
+    uid = request.state.uid
     """Poll for the status of an async sync job."""
     job = get_sync_job(job_id)
     if not job:

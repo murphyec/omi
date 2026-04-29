@@ -101,8 +101,7 @@ def get_conversations(
 
 @router.post("/v1/tools/conversations/search", response_model=ToolResponse)
 def search_conversations(
-    body: SearchConversationsRequest,
-    uid: str = Depends(with_rate_limit(get_current_user_uid, "tools:search")),
+    body: SearchConversationsRequest, uid: str = Depends(with_rate_limit(get_current_user_uid, "tools:search"))
 ):
     result = search_conversations_text(
         uid=uid,
@@ -126,26 +125,15 @@ def get_memories(
     end_date: Optional[str] = Query(default=None, description="ISO date with timezone"),
     uid: str = Depends(get_current_user_uid),
 ):
-    result = get_memories_text(
-        uid=uid,
-        limit=limit,
-        offset=offset,
-        start_date=start_date,
-        end_date=end_date,
-    )
+    result = get_memories_text(uid=uid, limit=limit, offset=offset, start_date=start_date, end_date=end_date)
     return _ok("get_memories", result)
 
 
 @router.post("/v1/tools/memories/search", response_model=ToolResponse)
 def search_memories(
-    body: SearchMemoriesRequest,
-    uid: str = Depends(with_rate_limit(get_current_user_uid, "tools:search")),
+    body: SearchMemoriesRequest, uid: str = Depends(with_rate_limit(get_current_user_uid, "tools:search"))
 ):
-    result = search_memories_text(
-        uid=uid,
-        query=body.query,
-        limit=body.limit,
-    )
+    result = search_memories_text(uid=uid, query=body.query, limit=body.limit)
     return _ok("search_memories", result)
 
 
@@ -180,14 +168,10 @@ def get_action_items(
 
 @router.post("/v1/tools/action-items", response_model=ToolResponse)
 def create_action_item(
-    body: CreateActionItemRequest,
-    uid: str = Depends(with_rate_limit(get_current_user_uid, "tools:mutate")),
+    body: CreateActionItemRequest, uid: str = Depends(with_rate_limit(get_current_user_uid, "tools:mutate"))
 ):
     result = create_action_item_text(
-        uid=uid,
-        description=body.description,
-        due_at=body.due_at,
-        conversation_id=body.conversation_id,
+        uid=uid, description=body.description, due_at=body.due_at, conversation_id=body.conversation_id
     )
     return _ok("create_action_item", result)
 

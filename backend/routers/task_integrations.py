@@ -103,7 +103,8 @@ def render_oauth_response(
     return templates.TemplateResponse('oauth_callback.html', context)
 
 
-def validate_and_consume_oauth_state(state_token: Optional[str]) -> Optional[Dict[str, str]]:
+def validate_and_consume_oauth_state(request: Request, state_token: Optional[str]) -> Optional[Dict[str, str]]:
+    uid = request.state.uid
     """
     Validate OAuth state token and return associated data.
     Deletes the state token after validation to prevent replay attacks.
@@ -186,7 +187,8 @@ class DefaultTaskIntegrationResponse(BaseModel):
 
 
 @router.get("/v1/task-integrations", response_model=TaskIntegrationsResponse, tags=['task-integrations'])
-def get_task_integrations(uid: str = Depends(auth.get_current_user_uid)):
+def get_task_integrations(request: Request):
+    uid = request.state.uid
     """Get all task integration connections for the current user."""
     integrations = users_db.get_task_integrations(uid)
     default_app = users_db.get_default_task_integration(uid)
@@ -195,21 +197,24 @@ def get_task_integrations(uid: str = Depends(auth.get_current_user_uid)):
 
 
 @router.get("/v1/task-integrations/default", response_model=DefaultTaskIntegrationResponse, tags=['task-integrations'])
-def get_default_task_integration(uid: str = Depends(auth.get_current_user_uid)):
+def get_default_task_integration(request: Request):
+    uid = request.state.uid
     """Get the user's default task integration app."""
     default_app = users_db.get_default_task_integration(uid)
     return DefaultTaskIntegrationResponse(default_app=default_app)
 
 
 @router.put("/v1/task-integrations/default", response_model=DefaultTaskIntegrationResponse, tags=['task-integrations'])
-def set_default_task_integration(request: DefaultTaskIntegrationRequest, uid: str = Depends(auth.get_current_user_uid)):
+def set_default_task_integration(request: DefaultTaskIntegrationRequest):
+    uid = request.state.uid
     """Set the user's default task integration app."""
     users_db.set_default_task_integration(uid, request.app_key)
     return DefaultTaskIntegrationResponse(default_app=request.app_key)
 
 
 @router.put("/v1/task-integrations/{app_key}", tags=['task-integrations'])
-def save_task_integration(app_key: str, data: TaskIntegrationData, uid: str = Depends(auth.get_current_user_uid)):
+def save_task_integration(request: Request, app_key: str, data: TaskIntegrationData):
+    uid = request.state.uid
     """Save or update a task integration connection."""
     # Convert Pydantic model to dict, excluding None values
     integration_data = data.model_dump(exclude_none=True)
@@ -220,7 +225,8 @@ def save_task_integration(app_key: str, data: TaskIntegrationData, uid: str = De
 
 
 @router.delete("/v1/task-integrations/{app_key}", status_code=204, tags=['task-integrations'])
-def delete_task_integration(app_key: str, uid: str = Depends(auth.get_current_user_uid)):
+def delete_task_integration(request: Request, app_key: str):
+    uid = request.state.uid
     """Delete a task integration connection."""
     success = users_db.delete_task_integration(uid, app_key)
 
@@ -247,7 +253,8 @@ class OAuthUrlResponse(BaseModel):
 
 
 @router.get("/v1/task-integrations/{app_key}/oauth-url", response_model=OAuthUrlResponse, tags=['task-integrations'])
-def get_oauth_url(app_key: str, uid: str = Depends(auth.get_current_user_uid)):
+def get_oauth_url(request: Request, app_key: str):
+    uid = request.state.uid
     """
     Get OAuth authorization URL for a task integration.
     Frontend opens this URL in browser to start OAuth flow.
@@ -459,12 +466,7 @@ async def ensure_valid_oauth_token(
     return integration
 
 
-async def perform_request_with_token_retry(
-    uid: str,
-    app_key: str,
-    integration: dict,
-    request_fn,
-):
+async def perform_request_with_token_retry(uid: str, app_key: str, integration: dict, request_fn):
     client = get_http_client()
     access_token = integration.get('access_token') or ''
     response = await request_fn(client, access_token)
@@ -520,11 +522,7 @@ async def _create_task_internal(
     """
     if app_key in ['google_tasks', 'asana']:
         integration = await ensure_valid_oauth_token(
-            uid,
-            app_key,
-            integration,
-            refresh_if_missing_expires_at=(app_key == 'google_tasks'),
-            client=client,
+            uid, app_key, integration, refresh_if_missing_expires_at=(app_key == 'google_tasks'), client=client
         )
         if not integration.get('connected'):
             name = OAUTH_CONFIGS.get(app_key, {'name': app_key}).get('name', app_key)
@@ -676,9 +674,7 @@ class CreateTaskResponse(BaseModel):
 
 
 @router.post("/v1/task-integrations/{app_key}/tasks", response_model=CreateTaskResponse, tags=['task-integrations'])
-async def create_task_via_integration(
-    app_key: str, request: CreateTaskRequest, uid: str = Depends(auth.get_current_user_uid)
-):
+async def create_task_via_integration(app_key: str, request: CreateTaskRequest):
     """Create a task in the specified integration using stored credentials."""
 
     # Get integration details
@@ -715,9 +711,7 @@ async def create_task_via_integration(
             raise HTTPException(status_code=401, detail=error_msg)
 
     return CreateTaskResponse(
-        success=result.get("success", False),
-        external_task_id=result.get("external_task_id"),
-        error=result.get("error"),
+        success=result.get("success", False), external_task_id=result.get("external_task_id"), error=result.get("error")
     )
 
 
@@ -727,7 +721,8 @@ async def create_task_via_integration(
 
 
 @router.get("/v1/task-integrations/asana/workspaces", tags=['task-integrations'])
-async def get_asana_workspaces(uid: str = Depends(auth.get_current_user_uid)):
+async def get_asana_workspaces(request: Request):
+    uid = request.state.uid
     """Get user's Asana workspaces"""
     data = users_db.get_task_integration(uid, 'asana')
 
@@ -747,8 +742,7 @@ async def get_asana_workspaces(uid: str = Depends(auth.get_current_user_uid)):
 
         async def _request(client, token):
             return await client.get(
-                'https://app.asana.com/api/1.0/workspaces',
-                headers={'Authorization': f'Bearer {token}'},
+                'https://app.asana.com/api/1.0/workspaces', headers={'Authorization': f'Bearer {token}'}
             )
 
         response, data, err = await perform_request_with_token_retry(uid, 'asana', data, _request)
@@ -767,7 +761,8 @@ async def get_asana_workspaces(uid: str = Depends(auth.get_current_user_uid)):
 
 
 @router.get("/v1/task-integrations/asana/projects/{workspace_gid}", tags=['task-integrations'])
-async def get_asana_projects(workspace_gid: str, uid: str = Depends(auth.get_current_user_uid)):
+async def get_asana_projects(request: Request, workspace_gid: str):
+    uid = request.state.uid
     """Get projects in an Asana workspace"""
     data = users_db.get_task_integration(uid, 'asana')
 
@@ -807,7 +802,8 @@ async def get_asana_projects(workspace_gid: str, uid: str = Depends(auth.get_cur
 
 
 @router.get("/v1/task-integrations/clickup/teams", tags=['task-integrations'])
-async def get_clickup_teams(uid: str = Depends(auth.get_current_user_uid)):
+async def get_clickup_teams(request: Request):
+    uid = request.state.uid
     """Get user's ClickUp teams"""
     data = users_db.get_task_integration(uid, 'clickup')
 
@@ -826,10 +822,7 @@ async def get_clickup_teams(uid: str = Depends(auth.get_current_user_uid)):
     try:
 
         async def _request(client, token):
-            return await client.get(
-                'https://api.clickup.com/api/v2/team',
-                headers={'Authorization': token},
-            )
+            return await client.get('https://api.clickup.com/api/v2/team', headers={'Authorization': token})
 
         response, data, err = await perform_request_with_token_retry(uid, 'clickup', data, _request)
         if err:
@@ -847,7 +840,8 @@ async def get_clickup_teams(uid: str = Depends(auth.get_current_user_uid)):
 
 
 @router.get("/v1/task-integrations/clickup/spaces/{team_id}", tags=['task-integrations'])
-async def get_clickup_spaces(team_id: str, uid: str = Depends(auth.get_current_user_uid)):
+async def get_clickup_spaces(request: Request, team_id: str):
+    uid = request.state.uid
     """Get spaces in a ClickUp team"""
     data = users_db.get_task_integration(uid, 'clickup')
 
@@ -867,8 +861,7 @@ async def get_clickup_spaces(team_id: str, uid: str = Depends(auth.get_current_u
 
         async def _request(client, token):
             return await client.get(
-                f'https://api.clickup.com/api/v2/team/{team_id}/space?archived=false',
-                headers={'Authorization': token},
+                f'https://api.clickup.com/api/v2/team/{team_id}/space?archived=false', headers={'Authorization': token}
             )
 
         response, data, err = await perform_request_with_token_retry(uid, 'clickup', data, _request)
@@ -887,7 +880,8 @@ async def get_clickup_spaces(team_id: str, uid: str = Depends(auth.get_current_u
 
 
 @router.get("/v1/task-integrations/clickup/lists/{space_id}", tags=['task-integrations'])
-async def get_clickup_lists(space_id: str, uid: str = Depends(auth.get_current_user_uid)):
+async def get_clickup_lists(request: Request, space_id: str):
+    uid = request.state.uid
     """Get lists in a ClickUp space"""
     data = users_db.get_task_integration(uid, 'clickup')
 
@@ -907,8 +901,7 @@ async def get_clickup_lists(space_id: str, uid: str = Depends(auth.get_current_u
 
         async def _request(client, token):
             return await client.get(
-                f'https://api.clickup.com/api/v2/space/{space_id}/list?archived=false',
-                headers={'Authorization': token},
+                f'https://api.clickup.com/api/v2/space/{space_id}/list?archived=false', headers={'Authorization': token}
             )
 
         response, data, err = await perform_request_with_token_retry(uid, 'clickup', data, _request)
@@ -945,11 +938,7 @@ class OAuthProviderConfig(BaseModel):
 
 
 async def handle_oauth_callback(
-    request: Request,
-    app_key: str,
-    code: Optional[str],
-    state: Optional[str],
-    provider_config: OAuthProviderConfig,
+    request: Request, app_key: str, code: Optional[str], state: Optional[str], provider_config: OAuthProviderConfig
 ) -> HTMLResponse:
     """
     Generic OAuth callback handler that works for all providers.
@@ -1047,15 +1036,9 @@ async def handle_oauth_callback(
         return render_oauth_response(request, app_key, success=True, redirect_url=deep_link)
 
 
-@router.get(
-    '/v2/integrations/todoist/callback',
-    response_class=HTMLResponse,
-    tags=['task-integrations', 'oauth'],
-)
+@router.get('/v2/integrations/todoist/callback', response_class=HTMLResponse, tags=['task-integrations', 'oauth'])
 async def todoist_oauth_callback(
-    request: Request,
-    code: Optional[str] = Query(None),
-    state: Optional[str] = Query(None),
+    request: Request, code: Optional[str] = Query(None), state: Optional[str] = Query(None)
 ):
     """OAuth callback endpoint for Todoist integration."""
     client_id = os.getenv('TODOIST_CLIENT_ID')
@@ -1077,16 +1060,8 @@ async def todoist_oauth_callback(
     return await handle_oauth_callback(request, 'todoist', code, state, config)
 
 
-@router.get(
-    '/v2/integrations/asana/callback',
-    response_class=HTMLResponse,
-    tags=['task-integrations', 'oauth'],
-)
-async def asana_oauth_callback(
-    request: Request,
-    code: Optional[str] = Query(None),
-    state: Optional[str] = Query(None),
-):
+@router.get('/v2/integrations/asana/callback', response_class=HTMLResponse, tags=['task-integrations', 'oauth'])
+async def asana_oauth_callback(request: Request, code: Optional[str] = Query(None), state: Optional[str] = Query(None)):
     """OAuth callback endpoint for Asana integration."""
     client_id = os.getenv('ASANA_CLIENT_ID')
     client_secret = os.getenv('ASANA_CLIENT_SECRET')
@@ -1104,8 +1079,7 @@ async def asana_oauth_callback(
             """Fetch Asana user GID"""
             try:
                 user_response = await client.get(
-                    'https://app.asana.com/api/1.0/users/me',
-                    headers={'Authorization': f'Bearer {access_token}'},
+                    'https://app.asana.com/api/1.0/users/me', headers={'Authorization': f'Bearer {access_token}'}
                 )
                 if user_response.status_code == 200:
                     user_data = user_response.json()
@@ -1130,15 +1104,9 @@ async def asana_oauth_callback(
     return await handle_oauth_callback(request, 'asana', code, state, config)
 
 
-@router.get(
-    '/v2/integrations/google-tasks/callback',
-    response_class=HTMLResponse,
-    tags=['task-integrations', 'oauth'],
-)
+@router.get('/v2/integrations/google-tasks/callback', response_class=HTMLResponse, tags=['task-integrations', 'oauth'])
 async def google_tasks_oauth_callback(
-    request: Request,
-    code: Optional[str] = Query(None),
-    state: Optional[str] = Query(None),
+    request: Request, code: Optional[str] = Query(None), state: Optional[str] = Query(None)
 ):
     """OAuth callback endpoint for Google Tasks integration."""
     client_id = os.getenv('GOOGLE_TASKS_CLIENT_ID')
@@ -1187,15 +1155,9 @@ async def google_tasks_oauth_callback(
     return await handle_oauth_callback(request, 'google_tasks', code, state, config)
 
 
-@router.get(
-    '/v2/integrations/clickup/callback',
-    response_class=HTMLResponse,
-    tags=['task-integrations', 'oauth'],
-)
+@router.get('/v2/integrations/clickup/callback', response_class=HTMLResponse, tags=['task-integrations', 'oauth'])
 async def clickup_oauth_callback(
-    request: Request,
-    code: Optional[str] = Query(None),
-    state: Optional[str] = Query(None),
+    request: Request, code: Optional[str] = Query(None), state: Optional[str] = Query(None)
 ):
     """OAuth callback endpoint for ClickUp integration."""
     client_id = os.getenv('CLICKUP_CLIENT_ID')

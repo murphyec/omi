@@ -393,11 +393,7 @@ async def get_desktop_appcast_xml(platform: str = Query(default="macos", pattern
 
         xml_content = _generate_appcast_xml(items, platform)
 
-        return Response(
-            content=xml_content,
-            media_type="application/xml",
-            headers={"Cache-Control": "max-age=300"},
-        )
+        return Response(content=xml_content, media_type="application/xml", headers={"Cache-Control": "max-age=300"})
     except HTTPException:
         raise
     except Exception as e:
@@ -450,9 +446,7 @@ async def download_latest_desktop_release(
 
 
 @router.get("/v2/desktop/download/beta")
-async def download_beta_desktop_release(
-    platform: str = Query(default="macos", pattern="^(macos|windows|linux)$"),
-):
+async def download_beta_desktop_release(platform: str = Query(default="macos", pattern="^(macos|windows|linux)$")):
     """
     Redirect to the latest beta desktop release DMG installer.
     Convenience endpoint for macos.omi.me/beta (URL map can't add query params).

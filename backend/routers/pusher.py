@@ -7,7 +7,7 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import Dict, Optional, Set
 
-from fastapi import APIRouter
+from fastapi import Request, APIRouter
 from fastapi.websockets import WebSocketDisconnect, WebSocket
 from starlette.websockets import WebSocketState
 
@@ -65,11 +65,7 @@ AUDIO_BYTES_QUEUE_WARN_SIZE = 20
 
 
 async def _process_conversation_task(
-    uid: str,
-    conversation_id: str,
-    language: str,
-    websocket: WebSocket,
-    byok_keys: Optional[Dict[str, str]] = None,
+    uid: str, conversation_id: str, language: str, websocket: WebSocket, byok_keys: Optional[Dict[str, str]] = None
 ):
     """Process a conversation and send result back to _listen via websocket.
 
@@ -77,8 +73,6 @@ async def _process_conversation_task(
     STT calls made inside process_conversation route through the user's own
     provider keys instead of Omi's env keys.
     """
-    if byok_keys:
-        set_byok_keys(byok_keys)
     try:
         conversation_data = conversations_db.get_conversation(uid, conversation_id)
         if not conversation_data:
@@ -141,11 +135,7 @@ async def _process_conversation_task(
             pass
 
 
-async def _websocket_util_trigger(
-    websocket: WebSocket,
-    uid: str,
-    sample_rate: int = 8000,
-):
+async def _websocket_util_trigger(websocket: WebSocket, uid: str, sample_rate: int = 8000):
     logger.info(f'_websocket_util_trigger {uid}')
 
     try:
@@ -168,12 +158,14 @@ async def _websocket_util_trigger(
     # Track background tasks to cancel on cleanup (prevents memory leaks from fire-and-forget tasks)
     bg_tasks: Set[asyncio.Task] = set()
 
-    def spawn(coro) -> asyncio.Task:
+    def spawn(request: Request, coro) -> asyncio.Task:
+        uid = request.state.uid
         """Create a tracked background task that will be cancelled on cleanup."""
         task = asyncio.create_task(coro)
         bg_tasks.add(task)
 
-        def on_done(t):
+        def on_done(request: Request, t):
+            uid = request.state.uid
             bg_tasks.discard(t)
             if t.cancelled():
                 return
@@ -195,7 +187,8 @@ async def _websocket_util_trigger(
     private_cloud_queue: deque = deque(maxlen=PRIVATE_CLOUD_QUEUE_MAX_SIZE)
     audio_bytes_event = asyncio.Event()  # Signals when items are added for instant wake
 
-    async def process_private_cloud_queue():
+    async def process_private_cloud_queue(request: Request):
+        uid = request.state.uid
         """Background task that batches private cloud sync uploads by conversation_id.
 
         Chunks are accumulated per conversation and flushed when:
@@ -221,7 +214,8 @@ async def _websocket_util_trigger(
             batch = pending[conv_id]
             batch['data'].extend(chunk_info['data'])
 
-        async def _flush_batch(conv_id: str):
+        async def _flush_batch(request: Request, conv_id: str):
+            uid = request.state.uid
             """Upload a batched chunk and update audio files."""
             batch = pending.pop(conv_id, None)
             if not batch or len(batch['data']) == 0:
@@ -336,7 +330,8 @@ async def _websocket_util_trigger(
                 except Exception as e:
                     logger.error(f"Error extracting speaker samples: {e} {uid} {conv_id}")
 
-    async def process_transcript_queue():
+    async def process_transcript_queue(request: Request):
+        uid = request.state.uid
         """Batched consumer for transcript events (realtime integrations + webhooks)."""
         nonlocal websocket_active
 
@@ -359,7 +354,8 @@ async def _websocket_util_trigger(
                 except Exception as e:
                     logger.error(f"Error processing transcript batch: {e} {uid}")
 
-    async def process_audio_bytes_queue():
+    async def process_audio_bytes_queue(request: Request):
+        uid = request.state.uid
         """Event-driven consumer for audio bytes triggers (app integrations + webhooks)."""
         nonlocal websocket_active
 
@@ -388,7 +384,8 @@ async def _websocket_util_trigger(
                 except Exception as e:
                     logger.error(f"Error processing audio bytes: {e} {uid}")
 
-    async def receive_tasks():
+    async def receive_tasks(request: Request):
+        uid = request.state.uid
         nonlocal websocket_active
         nonlocal websocket_close_code
         nonlocal speaker_sample_queue
@@ -592,13 +589,7 @@ async def _websocket_util_trigger(
         private_cloud_task = asyncio.create_task(process_private_cloud_queue())
         transcript_task = asyncio.create_task(process_transcript_queue())
         audio_bytes_task = asyncio.create_task(process_audio_bytes_queue())
-        await asyncio.gather(
-            receive_task,
-            speaker_sample_task,
-            private_cloud_task,
-            transcript_task,
-            audio_bytes_task,
-        )
+        await asyncio.gather(receive_task, speaker_sample_task, private_cloud_task, transcript_task, audio_bytes_task)
 
     except Exception as e:
         logger.error(f"Error during WebSocket operation: {e}")
@@ -623,9 +614,5 @@ async def _websocket_util_trigger(
 
 
 @router.websocket("/v1/trigger/listen")
-async def websocket_endpoint_trigger(
-    websocket: WebSocket,
-    uid: str,
-    sample_rate: int = 8000,
-):
+async def websocket_endpoint_trigger(websocket: WebSocket, uid: str, sample_rate: int = 8000):
     await _websocket_util_trigger(websocket, uid, sample_rate)

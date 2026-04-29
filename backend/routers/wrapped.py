@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from utils.executors import critical_executor
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import Request, APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 import database.wrapped as wrapped_db
@@ -47,7 +47,8 @@ def _run_wrapped_generation(uid: str, year: int):
 
 
 @router.get('/v1/wrapped/{year}', response_model=WrappedStatusResponse, tags=['wrapped'])
-def get_wrapped_status(year: int, uid: str = Depends(auth.get_current_user_uid)):
+def get_wrapped_status(request: Request, year: int):
+    uid = request.state.uid
     """
     Get the status and result of wrapped generation for a given year.
 
@@ -64,10 +65,7 @@ def get_wrapped_status(year: int, uid: str = Depends(auth.get_current_user_uid))
     wrapped = wrapped_db.get_wrapped(uid, year)
 
     if not wrapped:
-        return WrappedStatusResponse(
-            status=WrappedStatus.NOT_GENERATED,
-            year=year,
-        )
+        return WrappedStatusResponse(status=WrappedStatus.NOT_GENERATED, year=year)
 
     return WrappedStatusResponse(
         status=wrapped.get('status', WrappedStatus.NOT_GENERATED),
@@ -78,10 +76,14 @@ def get_wrapped_status(year: int, uid: str = Depends(auth.get_current_user_uid))
     )
 
 
-@router.post('/v1/wrapped/{year}/generate', response_model=GenerateWrappedResponse, tags=['wrapped'])
-def generate_wrapped(
-    year: int, uid: str = Depends(auth.with_rate_limit(auth.get_current_user_uid, "wrapped:generate"))
-):
+@router.post(
+    '/v1/wrapped/{year}/generate',
+    response_model=GenerateWrappedResponse,
+    tags=['wrapped'],
+    dependencies=[Depends(auth.with_rate_limit("wrapped:generate"))],
+)
+def generate_wrapped(request: Request, year: int):
+    uid = request.state.uid
     """
     Start wrapped generation for a given year.
 
@@ -99,10 +101,7 @@ def generate_wrapped(
 
     # Already done - no regeneration in v1
     if wrapped and wrapped.get('status') == WrappedStatus.DONE:
-        return GenerateWrappedResponse(
-            status=WrappedStatus.DONE,
-            message="Your Wrapped 2025 is already generated",
-        )
+        return GenerateWrappedResponse(status=WrappedStatus.DONE, message="Your Wrapped 2025 is already generated")
 
     # Already processing - check if stuck
     if wrapped and wrapped.get('status') == WrappedStatus.PROCESSING:
@@ -110,15 +109,9 @@ def generate_wrapped(
             # Restart stuck job
             wrapped_db.reset_wrapped_for_regeneration(uid, year)
             critical_executor.submit(_run_wrapped_generation, uid, year)
-            return GenerateWrappedResponse(
-                status=WrappedStatus.PROCESSING,
-                message="Restarting stuck generation...",
-            )
+            return GenerateWrappedResponse(status=WrappedStatus.PROCESSING, message="Restarting stuck generation...")
         else:
-            return GenerateWrappedResponse(
-                status=WrappedStatus.PROCESSING,
-                message="Generation is already in progress",
-            )
+            return GenerateWrappedResponse(status=WrappedStatus.PROCESSING, message="Generation is already in progress")
 
     # Error or not generated - start fresh
     if wrapped and wrapped.get('status') == WrappedStatus.ERROR:
@@ -129,7 +122,4 @@ def generate_wrapped(
     # Start generation in background
     critical_executor.submit(_run_wrapped_generation, uid, year)
 
-    return GenerateWrappedResponse(
-        status=WrappedStatus.PROCESSING,
-        message="Starting Wrapped 2025 generation...",
-    )
+    return GenerateWrappedResponse(status=WrappedStatus.PROCESSING, message="Starting Wrapped 2025 generation...")

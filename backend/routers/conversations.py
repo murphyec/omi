@@ -1,6 +1,6 @@
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi import Request, APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from typing import Optional, List
 from datetime import datetime, timezone
 
@@ -67,11 +67,14 @@ class ProcessConversationRequest(BaseModel):
     calendar_meeting_context: Optional[CalendarMeetingContext] = None
 
 
-@router.post("/v1/conversations", response_model=CreateConversationResponse, tags=['conversations'])
-def process_in_progress_conversation(
-    request: ProcessConversationRequest = None,
-    uid: str = Depends(auth.with_rate_limit(auth.get_current_user_uid, "conversations:create")),
-):
+@router.post(
+    "/v1/conversations",
+    response_model=CreateConversationResponse,
+    tags=['conversations'],
+    dependencies=[Depends(auth.with_rate_limit("conversations:create"))],
+)
+def process_in_progress_conversation(request: ProcessConversationRequest = None):
+    uid = request.state.uid
     conversation = retrieve_in_progress_conversation(uid)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation in progress not found")
@@ -98,13 +101,16 @@ def process_in_progress_conversation(
     return CreateConversationResponse(conversation=conversation, messages=messages)
 
 
-@router.post('/v1/conversations/{conversation_id}/reprocess', response_model=Conversation, tags=['conversations'])
+@router.post(
+    '/v1/conversations/{conversation_id}/reprocess',
+    response_model=Conversation,
+    tags=['conversations'],
+    dependencies=[Depends(auth.with_rate_limit("conversations:reprocess"))],
+)
 def reprocess_conversation(
-    conversation_id: str,
-    language_code: Optional[str] = None,
-    app_id: Optional[str] = None,
-    uid: str = Depends(auth.with_rate_limit(auth.get_current_user_uid, "conversations:reprocess")),
+    request: Request, conversation_id: str, language_code: Optional[str] = None, app_id: Optional[str] = None
 ):
+    uid = request.state.uid
     """
     Whenever a user wants to reprocess a conversation, or wants to force process a discarded one
     :param conversation_id: The ID of the conversation to reprocess
@@ -126,6 +132,7 @@ def reprocess_conversation(
 
 @router.get('/v1/conversations', response_model=List[Conversation], tags=['conversations'])
 def get_conversations(
+    request: Request,
     limit: int = 100,
     offset: int = 0,
     statuses: Optional[str] = "processing,completed",
@@ -134,8 +141,8 @@ def get_conversations(
     end_date: Optional[datetime] = Query(None, description="Filter by end date (inclusive)"),
     folder_id: Optional[str] = Query(None, description="Filter by folder ID"),
     starred: Optional[bool] = Query(None, description="Filter by starred status"),
-    uid: str = Depends(auth.get_current_user_uid),
 ):
+    uid = request.state.uid
     logger.info(f'get_conversations {uid} {limit} {offset} {statuses} {folder_id} {starred}')
     # force convos statuses to processing, completed on the empty filter
     if len(statuses) == 0:
@@ -159,23 +166,26 @@ def get_conversations(
 
 @router.get('/v1/conversations/count', tags=['conversations'])
 def get_conversations_count(
+    request: Request,
     statuses: Optional[str] = Query(None, description="Comma-separated status filter (e.g. processing,completed)"),
     include_discarded: bool = Query(False),
-    uid: str = Depends(auth.get_current_user_uid),
 ):
+    uid = request.state.uid
     status_list = [s.strip() for s in statuses.split(',') if s.strip()] if statuses else []
     count = conversations_db.get_conversations_count(uid, include_discarded=include_discarded, statuses=status_list)
     return {'count': count}
 
 
 @router.get("/v1/conversations/{conversation_id}", response_model=Conversation, tags=['conversations'])
-def get_conversation_by_id(conversation_id: str, uid: str = Depends(auth.get_current_user_uid)):
+def get_conversation_by_id(request: Request, conversation_id: str):
+    uid = request.state.uid
     logger.info(f'get_conversation_by_id {uid} {conversation_id}')
     return _get_valid_conversation_by_id(uid, conversation_id)
 
 
 @router.patch("/v1/conversations/{conversation_id}/title", tags=['conversations'])
-def patch_conversation_title(conversation_id: str, title: str, uid: str = Depends(auth.get_current_user_uid)):
+def patch_conversation_title(request: Request, conversation_id: str, title: str):
+    uid = request.state.uid
     _get_valid_conversation_by_id(uid, conversation_id)
     conversations_db.update_conversation_title(uid, conversation_id, title)
     return {'status': 'Ok'}
@@ -194,9 +204,8 @@ def patch_conversation_summary(
 
 
 @router.patch("/v1/conversations/{conversation_id}/segments/text", tags=['conversations'])
-def patch_conversation_segment_text(
-    conversation_id: str, data: UpdateSegmentTextRequest, uid: str = Depends(auth.get_current_user_uid)
-):
+def patch_conversation_segment_text(request: Request, conversation_id: str, data: UpdateSegmentTextRequest):
+    uid = request.state.uid
     result = conversations_db.update_conversation_segment_text(uid, conversation_id, data.segment_id, data.text)
     if result == 'not_found':
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -210,7 +219,8 @@ def patch_conversation_segment_text(
 @router.get(
     "/v1/conversations/{conversation_id}/photos", response_model=List[ConversationPhoto], tags=['conversations']
 )
-def get_conversation_photos(conversation_id: str, uid: str = Depends(auth.get_current_user_uid)):
+def get_conversation_photos(request: Request, conversation_id: str):
+    uid = request.state.uid
     _get_valid_conversation_by_id(uid, conversation_id)
     return conversations_db.get_conversation_photos(uid, conversation_id)
 
@@ -220,18 +230,17 @@ def get_conversation_photos(conversation_id: str, uid: str = Depends(auth.get_cu
     response_model=dict[str, List[TranscriptSegment]],
     tags=['conversations'],
 )
-def get_conversation_transcripts_by_models(conversation_id: str, uid: str = Depends(auth.get_current_user_uid)):
+def get_conversation_transcripts_by_models(request: Request, conversation_id: str):
+    uid = request.state.uid
     _get_valid_conversation_by_id(uid, conversation_id)
     return conversations_db.get_conversation_transcripts_by_model(uid, conversation_id)
 
 
 @router.delete("/v1/conversations/{conversation_id}", status_code=204, tags=['conversations'])
 def delete_conversation(
-    conversation_id: str,
-    background_tasks: BackgroundTasks,
-    cascade: bool = Query(False),
-    uid: str = Depends(auth.get_current_user_uid),
+    request: Request, conversation_id: str, background_tasks: BackgroundTasks, cascade: bool = Query(False)
 ):
+    uid = request.state.uid
     logger.info(f'delete_conversation {conversation_id} {uid} cascade={cascade}')
     conversations_db.delete_conversation(uid, conversation_id)
     delete_vector(uid, conversation_id)
@@ -253,15 +262,15 @@ def delete_conversation(
 
 
 @router.get("/v1/conversations/{conversation_id}/recording", response_model=dict, tags=['conversations'])
-def conversation_has_audio_recording(conversation_id: str, uid: str = Depends(auth.get_current_user_uid)):
+def conversation_has_audio_recording(request: Request, conversation_id: str):
+    uid = request.state.uid
     _get_valid_conversation_by_id(uid, conversation_id)
     return {'has_recording': get_conversation_recording_if_exists(uid, conversation_id) is not None}
 
 
 @router.patch("/v1/conversations/{conversation_id}/events", response_model=dict, tags=['conversations'])
-def set_conversation_events_state(
-    conversation_id: str, data: SetConversationEventsStateRequest, uid: str = Depends(auth.get_current_user_uid)
-):
+def set_conversation_events_state(request: Request, conversation_id: str, data: SetConversationEventsStateRequest):
+    uid = request.state.uid
     conversation = _get_valid_conversation_by_id(uid, conversation_id)
     conversation = deserialize_conversation(conversation)
     events = conversation.structured.events
@@ -275,9 +284,8 @@ def set_conversation_events_state(
 
 
 @router.patch("/v1/conversations/{conversation_id}/action-items", response_model=dict, tags=['conversations'])
-def set_action_item_status(
-    data: SetConversationActionItemsStateRequest, conversation_id: str, uid=Depends(auth.get_current_user_uid)
-):
+def set_action_item_status(request: Request, data: SetConversationActionItemsStateRequest, conversation_id: str):
+    uid = request.state.uid
     conversation = _get_valid_conversation_by_id(uid, conversation_id)
     conversation = deserialize_conversation(conversation)
     action_items = conversation.structured.action_items
@@ -336,9 +344,8 @@ def set_action_item_status(
 @router.patch(
     "/v1/conversations/{conversation_id}/action-items/{action_item_idx}", response_model=dict, tags=['conversations']
 )
-def update_action_item_description(
-    conversation_id: str, data: UpdateActionItemDescriptionRequest, uid=Depends(auth.get_current_user_uid)
-):
+def update_action_item_description(request: Request, conversation_id: str, data: UpdateActionItemDescriptionRequest):
+    uid = request.state.uid
     conversation = _get_valid_conversation_by_id(uid, conversation_id)
     conversation = deserialize_conversation(conversation)
     action_items = conversation.structured.action_items
@@ -369,7 +376,8 @@ def update_action_item_description(
 
 
 @router.delete("/v1/conversations/{conversation_id}/action-items", response_model=dict, tags=['conversations'])
-def delete_action_item(data: DeleteActionItemRequest, conversation_id: str, uid=Depends(auth.get_current_user_uid)):
+def delete_action_item(request: Request, data: DeleteActionItemRequest, conversation_id: str):
+    uid = request.state.uid
     conversation = _get_valid_conversation_by_id(uid, conversation_id)
     conversation = deserialize_conversation(conversation)
     action_items = conversation.structured.action_items
@@ -395,13 +403,14 @@ def delete_action_item(data: DeleteActionItemRequest, conversation_id: str, uid=
     tags=['conversations'],
 )
 def set_assignee_conversation_segment(
+    request: Request,
     conversation_id: str,
     segment_idx: int,
     assign_type: str,
     value: Optional[str] = None,
     use_for_speech_training: bool = True,
-    uid: str = Depends(auth.get_current_user_uid),
 ):
+    uid = request.state.uid
     """
     Another complex endpoint.
 
@@ -464,13 +473,14 @@ def set_assignee_conversation_segment(
     tags=['conversations'],
 )
 def set_assignee_conversation_segment(
+    request: Request,
     conversation_id: str,
     speaker_id: int,
     assign_type: str,
     value: Optional[str] = None,
     use_for_speech_training: bool = True,
-    uid: str = Depends(auth.get_current_user_uid),
 ):
+    uid = request.state.uid
     """
     Another complex endpoint.
 
@@ -541,16 +551,9 @@ def set_assignee_conversation_segment(
 
 
 @router.patch(
-    '/v1/conversations/{conversation_id}/segments/assign-bulk',
-    response_model=Conversation,
-    tags=['conversations'],
+    '/v1/conversations/{conversation_id}/segments/assign-bulk', response_model=Conversation, tags=['conversations']
 )
-def assign_segments_bulk(
-    conversation_id: str,
-    data: BulkAssignSegmentsRequest,
-    background_tasks: BackgroundTasks,
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def assign_segments_bulk(conversation_id: str, data: BulkAssignSegmentsRequest, background_tasks: BackgroundTasks):
     conversation = _get_valid_conversation_by_id(uid, conversation_id)
     conversation = deserialize_conversation(conversation)
 
@@ -595,9 +598,8 @@ def assign_segments_bulk(
 
 
 @router.patch('/v1/conversations/{conversation_id}/visibility', tags=['conversations'])
-def set_conversation_visibility(
-    conversation_id: str, value: ConversationVisibility, uid: str = Depends(auth.get_current_user_uid)
-):
+def set_conversation_visibility(request: Request, conversation_id: str, value: ConversationVisibility):
+    uid = request.state.uid
     logger.info(f'update_conversation_visibility {conversation_id} {value} {uid}')
     _get_valid_conversation_by_id(uid, conversation_id)
     conversations_db.set_conversation_visibility(uid, conversation_id, value)
@@ -612,7 +614,8 @@ def set_conversation_visibility(
 
 
 @router.patch('/v1/conversations/{conversation_id}/starred', tags=['conversations'])
-def set_conversation_starred(conversation_id: str, starred: bool, uid: str = Depends(auth.get_current_user_uid)):
+def set_conversation_starred(request: Request, conversation_id: str, starred: bool):
+    uid = request.state.uid
     logger.info(f'update_conversation_starred {conversation_id} {starred} {uid}')
     _get_valid_conversation_by_id(uid, conversation_id)
     conversations_db.set_conversation_starred(uid, conversation_id, starred)
@@ -645,11 +648,13 @@ def get_shared_conversation_by_id(conversation_id: str):
     return response_dict
 
 
-@router.post("/v1/conversations/search", response_model=dict, tags=['conversations'])
-def search_conversations_endpoint(
-    search_request: SearchRequest,
-    uid: str = Depends(auth.with_rate_limit(auth.get_current_user_uid, "conversations:search")),
-):
+@router.post(
+    "/v1/conversations/search",
+    response_model=dict,
+    tags=['conversations'],
+    dependencies=[Depends(auth.with_rate_limit("conversations:search"))],
+)
+def search_conversations_endpoint(search_request: SearchRequest):
     # Convert ISO datetime strings to Unix timestamps if provided
     start_timestamp = None
     end_timestamp = None
@@ -672,7 +677,8 @@ def search_conversations_endpoint(
 
 
 @router.get("/v1/conversations/{conversation_id}/suggested-apps", response_model=dict, tags=['conversations'])
-def get_conversation_suggested_apps(conversation_id: str, uid: str = Depends(auth.get_current_user_uid)):
+def get_conversation_suggested_apps(request: Request, conversation_id: str):
+    uid = request.state.uid
     from utils.apps import get_available_apps, get_available_app_by_id_with_reviews
     from models.app import App
 
@@ -705,12 +711,14 @@ def get_conversation_suggested_apps(conversation_id: str, uid: str = Depends(aut
     return {"suggested_apps": [app.dict() for app in suggested_apps], "conversation_id": conversation_id}
 
 
-@router.post("/v1/conversations/{conversation_id}/test-prompt", response_model=dict, tags=['conversations'])
-def test_prompt(
-    conversation_id: str,
-    request: TestPromptRequest,
-    uid: str = Depends(auth.with_rate_limit(auth.get_current_user_uid, "test:prompt")),
-):
+@router.post(
+    "/v1/conversations/{conversation_id}/test-prompt",
+    response_model=dict,
+    tags=['conversations'],
+    dependencies=[Depends(auth.with_rate_limit("test:prompt"))],
+)
+def test_prompt(conversation_id: str, request: TestPromptRequest):
+    uid = request.state.uid
     conversation_data = _get_valid_conversation_by_id(uid, conversation_id)
     conversation = deserialize_conversation(conversation_data)
 
@@ -730,12 +738,13 @@ def test_prompt(
 # *********************************************
 
 
-@router.post('/v1/conversations/merge', response_model=MergeConversationsResponse, tags=['conversations'])
-async def merge_conversations(
-    request: MergeConversationsRequest,
-    background_tasks: BackgroundTasks,
-    uid: str = Depends(auth.with_rate_limit(auth.get_current_user_uid, "conversations:merge")),
-):
+@router.post(
+    '/v1/conversations/merge',
+    response_model=MergeConversationsResponse,
+    tags=['conversations'],
+    dependencies=[Depends(auth.with_rate_limit("conversations:merge"))],
+)
+async def merge_conversations(request: MergeConversationsRequest, background_tasks: BackgroundTasks):
     """
     Merge multiple conversations into a new conversation (async).
 
@@ -777,15 +786,9 @@ async def merge_conversations(
 
     # Start background merge task
     background_tasks.add_task(
-        perform_merge_async,
-        uid=uid,
-        conversation_ids=request.conversation_ids,
-        reprocess=request.reprocess,
+        perform_merge_async, uid=uid, conversation_ids=request.conversation_ids, reprocess=request.reprocess
     )
 
     return MergeConversationsResponse(
-        status="merging",
-        message="Merge started",
-        warning=warning_message,
-        conversation_ids=request.conversation_ids,
+        status="merging", message="Merge started", warning=warning_message, conversation_ids=request.conversation_ids
     )

@@ -135,12 +135,7 @@ def _build_quota_exceeded_reply(
     """
     now = datetime.now(timezone.utc)
     user_msg = Message(
-        id=str(uuid.uuid4()),
-        text=data.text,
-        created_at=now,
-        sender='human',
-        type='text',
-        app_id=compat_app_id,
+        id=str(uuid.uuid4()), text=data.text, created_at=now, sender='human', type='text', app_id=compat_app_id
     )
     chat_db.add_message(uid, user_msg.dict())
 
@@ -179,17 +174,19 @@ def _build_quota_exceeded_reply(
     return ResponseMessage(**ai_msg.dict(), ask_for_nps=False)
 
 
-@router.post('/v2/messages', tags=['chat'], response_model=ResponseMessage)
+@router.post(
+    '/v2/messages',
+    tags=['chat'],
+    response_model=ResponseMessage,
+    dependencies=[Depends(auth.with_rate_limit("chat:send_message"))],
+)
 def send_message(
+    request: Request,
     data: SendMessageRequest,
     plugin_id: Optional[str] = None,
     app_id: Optional[str] = None,
-    uid: str = Depends(auth.with_rate_limit(auth.get_current_user_uid, "chat:send_message")),
     x_app_platform: Optional[str] = Header(None, alias='X-App-Platform'),
-    byok_keys: dict = Depends(auth.get_validated_byok_keys_http),
 ):
-    if byok_keys:
-        set_byok_keys(byok_keys)
     # Hard cap: Free by question count, Architect by cost_usd. Operator enters
     # overage mode silently. If exceeded, instead of raising 402 (which mobile
     # clients render as a generic "having issues with the server" error), save
@@ -197,6 +194,7 @@ def send_message(
     # streaming contract this endpoint already uses — so mobile parses it like
     # any other reply. Desktop pre-checks via /v1/users/me/usage-quota and
     # never reaches here when over.
+    uid = request.state.uid
     try:
         enforce_chat_quota(uid, platform=x_app_platform)
     except HTTPException as exc:
@@ -266,7 +264,8 @@ def send_message(
 
     messages = list(reversed([Message(**msg) for msg in chat_db.get_messages(uid, limit=10, app_id=compat_app_id)]))
 
-    def process_message(response: str, callback_data: dict):
+    def process_message(request: Request, response: str, callback_data: dict):
+        uid = request.state.uid
         memories = callback_data.get('memories_found', [])
         ask_for_nps = callback_data.get('ask_for_nps', False)
         langsmith_run_id = callback_data.get('langsmith_run_id')
@@ -306,7 +305,8 @@ def send_message(
 
         return ai_message, ask_for_nps
 
-    async def generate_stream():
+    async def generate_stream(request: Request):
+        uid = request.state.uid
         callback_data = {}
         # Set usage context for streaming (can't use 'with' across yields)
         usage_token = set_usage_context(uid, Features.CHAT)
@@ -341,7 +341,8 @@ def send_message(
 
 
 @router.post('/v2/messages/{message_id}/report', tags=['chat'], response_model=dict)
-def report_message(message_id: str, uid: str = Depends(auth.get_current_user_uid)):
+def report_message(request: Request, message_id: str):
+    uid = request.state.uid
     message, msg_doc_id = chat_db.get_message(uid, message_id)
     if message is None:
         raise HTTPException(status_code=404, detail='Message not found')
@@ -354,9 +355,8 @@ def report_message(message_id: str, uid: str = Depends(auth.get_current_user_uid
 
 
 @router.delete('/v2/messages', tags=['chat'], response_model=Message)
-def clear_chat_messages(
-    app_id: Optional[str] = None, plugin_id: Optional[str] = None, uid: str = Depends(auth.get_current_user_uid)
-):
+def clear_chat_messages(request: Request, app_id: Optional[str] = None, plugin_id: Optional[str] = None):
+    uid = request.state.uid
     compat_app_id = app_id or plugin_id
     if compat_app_id in ['null', '']:
         compat_app_id = None
@@ -434,20 +434,21 @@ def initial_message_util(uid: str, app_id: Optional[str] = None, chat_session_id
     return ai_message
 
 
-@router.post('/v2/initial-message', tags=['chat'], response_model=Message)
-def create_initial_message(
-    app_id: Optional[str] = None,
-    plugin_id: Optional[str] = None,
-    uid: str = Depends(auth.with_rate_limit(auth.get_current_user_uid, "chat:initial")),
-):
+@router.post(
+    '/v2/initial-message',
+    tags=['chat'],
+    response_model=Message,
+    dependencies=[Depends(auth.with_rate_limit("chat:initial"))],
+)
+def create_initial_message(request: Request, app_id: Optional[str] = None, plugin_id: Optional[str] = None):
+    uid = request.state.uid
     compat_app_id = app_id or plugin_id
     return initial_message_util(uid, compat_app_id)
 
 
 @router.get('/v2/messages', response_model=List[Message], tags=['chat'])
-def get_messages(
-    plugin_id: Optional[str] = None, app_id: Optional[str] = None, uid: str = Depends(auth.get_current_user_uid)
-):
+def get_messages(request: Request, plugin_id: Optional[str] = None, app_id: Optional[str] = None):
+    uid = request.state.uid
     compat_app_id = app_id or plugin_id
     if compat_app_id in ['null', '']:
         compat_app_id = None
@@ -472,16 +473,14 @@ def get_messages(
     return messages
 
 
-@router.post("/v2/voice-messages")
+@router.post("/v2/voice-messages", dependencies=[Depends(auth.with_rate_limit("voice:message"))])
 async def create_voice_message_stream(
+    request: Request,
     files: List[UploadFile] = File(...),
     language: Optional[str] = Form(None),
-    uid: str = Depends(auth.with_rate_limit(auth.get_current_user_uid, "voice:message")),
     x_app_platform: Optional[str] = Header(None, alias='X-App-Platform'),
-    byok_keys: dict = Depends(auth.get_validated_byok_keys_http),
 ):
-    if byok_keys:
-        set_byok_keys(byok_keys)
+    uid = request.state.uid
     enforce_chat_quota(uid, platform=x_app_platform)
 
     # wav
@@ -504,20 +503,20 @@ async def create_voice_message_stream(
     resolved_language = resolve_voice_message_language(uid, language)
 
     # process
-    async def generate_stream():
+    async def generate_stream(request: Request):
+        uid = request.state.uid
         async for chunk in process_voice_message_segment_stream(first_wav, uid, language=resolved_language):
             yield chunk
 
     return StreamingResponse(generate_stream(), media_type="text/event-stream")
 
 
-@router.post("/v2/voice-message/transcribe")
+@router.post("/v2/voice-message/transcribe", dependencies=[Depends(auth.with_rate_limit("voice:transcribe"))])
 async def transcribe_voice_message(
     request: Request,
-    uid: str = Depends(auth.with_rate_limit(auth.get_current_user_uid, "voice:transcribe")),
     x_app_platform: Optional[str] = Header(None, alias='X-App-Platform'),
-    byok_keys: dict = Depends(auth.get_validated_byok_keys_http),
 ):
+    uid = request.state.uid
     """Transcribe audio and return the transcript text.
 
     Accepts two content types:
@@ -531,9 +530,6 @@ async def transcribe_voice_message(
     # change mobile behavior for users past their existing 30/mo chat cap.
     if is_trial_paywalled(uid, x_app_platform):
         raise HTTPException(status_code=402, detail={'error': 'quota_exceeded', 'plan_type': 'basic'})
-
-    if byok_keys:
-        set_byok_keys(byok_keys)
     content_type = request.headers.get("content-type", "")
 
     if "application/octet-stream" in content_type:
@@ -736,8 +732,6 @@ async def transcribe_voice_message_stream(
         [{"speaker": "SPEAKER_00", "start": 0.0, "end": 1.5, "text": "Hello world",
           "is_user": false, "person_id": null}]
     """
-    if byok_keys:
-        set_byok_keys(byok_keys)
     await websocket.accept()
 
     # Paywalled desktop users — close before opening DG connection so we don't
@@ -805,7 +799,8 @@ async def transcribe_voice_message_stream(
     def stream_transcript(segments):
         loop.call_soon_threadsafe(segment_queue.put_nowait, segments)
 
-    async def segment_sender():
+    async def segment_sender(request: Request):
+        uid = request.state.uid
         """Forward segments from the thread-safe queue to the WebSocket."""
         nonlocal websocket_active
         while websocket_active:
@@ -964,11 +959,14 @@ async def transcribe_voice_message_stream(
         del stt_audio_buffer
 
 
-@router.post('/v2/files', response_model=List[FileChat], tags=['chat'])
-def upload_file_chat(
-    files: List[UploadFile] = File(...),
-    uid: str = Depends(auth.with_rate_limit(auth.get_current_user_uid, "file:upload")),
-):
+@router.post(
+    '/v2/files',
+    response_model=List[FileChat],
+    tags=['chat'],
+    dependencies=[Depends(auth.with_rate_limit("file:upload"))],
+)
+def upload_file_chat(request: Request, files: List[UploadFile] = File(...)):
+    uid = request.state.uid
     thumbs_name = []
     files_chat = []
     for file in files:
@@ -1020,11 +1018,14 @@ def upload_file_chat(
 # CLEANUP: Remove after new app goes to prod ----------------------------------------------------------
 
 
-@router.post('/v1/files', response_model=List[FileChat], tags=['chat'])
-def upload_file_chat(
-    files: List[UploadFile] = File(...),
-    uid: str = Depends(auth.with_rate_limit(auth.get_current_user_uid, "file:upload")),
-):
+@router.post(
+    '/v1/files',
+    response_model=List[FileChat],
+    tags=['chat'],
+    dependencies=[Depends(auth.with_rate_limit("file:upload"))],
+)
+def upload_file_chat(request: Request, files: List[UploadFile] = File(...)):
+    uid = request.state.uid
     thumbs_name = []
     files_chat = []
     for file in files:
@@ -1073,7 +1074,8 @@ def upload_file_chat(
 
 
 @router.post('/v1/messages/{message_id}/report', tags=['chat'], response_model=dict)
-def report_message(message_id: str, uid: str = Depends(auth.get_current_user_uid)):
+def report_message(request: Request, message_id: str):
+    uid = request.state.uid
     message, msg_doc_id = chat_db.get_message(uid, message_id)
     if message is None:
         raise HTTPException(status_code=404, detail='Message not found')
@@ -1086,9 +1088,8 @@ def report_message(message_id: str, uid: str = Depends(auth.get_current_user_uid
 
 
 @router.delete('/v1/messages', tags=['chat'], response_model=Message)
-def clear_chat_messages(
-    plugin_id: Optional[str] = None, app_id: Optional[str] = None, uid: str = Depends(auth.get_current_user_uid)
-):
+def clear_chat_messages(request: Request, plugin_id: Optional[str] = None, app_id: Optional[str] = None):
+    uid = request.state.uid
     compat_app_id = app_id or plugin_id
     if compat_app_id in ['null', '']:
         compat_app_id = None
@@ -1117,12 +1118,14 @@ def clear_chat_messages(
     return initial_message_util(uid, compat_app_id)
 
 
-@router.post('/v1/initial-message', tags=['chat'], response_model=Message)
-def create_initial_message(
-    plugin_id: Optional[str] = None,
-    app_id: Optional[str] = None,
-    uid: str = Depends(auth.with_rate_limit(auth.get_current_user_uid, "chat:initial")),
-):
+@router.post(
+    '/v1/initial-message',
+    tags=['chat'],
+    response_model=Message,
+    dependencies=[Depends(auth.with_rate_limit("chat:initial"))],
+)
+def create_initial_message(request: Request, plugin_id: Optional[str] = None, app_id: Optional[str] = None):
+    uid = request.state.uid
     compat_app_id = app_id or plugin_id
     return initial_message_util(uid, compat_app_id)
 
@@ -1131,11 +1134,8 @@ def create_initial_message(
 
 
 @router.patch('/v2/messages/{message_id}/rating', tags=['chat'])
-def rate_message(
-    message_id: str,
-    data: dict,
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def rate_message(request: Request, message_id: str, data: dict):
+    uid = request.state.uid
     """Rate a chat message (thumbs up/down). Used by desktop client."""
     rating = data.get('rating')
 
@@ -1157,11 +1157,7 @@ def rate_message(
 
             if langsmith_run_id:
                 score = 1.0 if rating == 1 else (0.0 if rating == -1 else 0.5)
-                submit_langsmith_feedback(
-                    run_id=langsmith_run_id,
-                    score=score,
-                    key="chat_message_rating",
-                )
+                submit_langsmith_feedback(run_id=langsmith_run_id, score=score, key="chat_message_rating")
     except Exception as e:
         logger.error(f"LangSmith feedback submission error (non-fatal): {e}")
 
@@ -1172,10 +1168,8 @@ def rate_message(
 
 
 @router.post('/v2/messages/share', tags=['chat'])
-def share_chat_messages(
-    data: dict,
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def share_chat_messages(request: Request, data: dict):
+    uid = request.state.uid
     """Create a shareable link for chat messages."""
     message_ids = data.get('message_ids', [])
     if not message_ids:
@@ -1197,7 +1191,8 @@ def share_chat_messages(
 
 
 @router.get('/v2/messages/shared/{token}', tags=['chat'])
-def get_shared_chat_messages(token: str):
+def get_shared_chat_messages(request: Request, token: str):
+    uid = request.state.uid
     """Public endpoint — get shared chat messages (no auth required)."""
     share_data = get_chat_share(token)
     if not share_data:

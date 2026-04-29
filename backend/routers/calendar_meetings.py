@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import Request, APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 import database.calendar_meetings as calendar_db
@@ -34,10 +34,8 @@ class StoreMeetingResponse(BaseModel):
 
 
 @router.post('/v1/calendar/meetings', response_model=StoreMeetingResponse, tags=['calendar'])
-def store_calendar_meeting(
-    request: StoreMeetingRequest,
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def store_calendar_meeting(request: StoreMeetingRequest):
+    uid = request.state.uid
     """
     Store or update a calendar meeting in Firestore.
     If a meeting with the same calendar_event_id and calendar_source exists, it will be updated.
@@ -78,10 +76,8 @@ def store_calendar_meeting(
 
 
 @router.get('/v1/calendar/meetings/{meeting_id}', response_model=CalendarMeetingContext, tags=['calendar'])
-def get_calendar_meeting(
-    meeting_id: str,
-    uid: str = Depends(auth.get_current_user_uid),
-):
+def get_calendar_meeting(request: Request, meeting_id: str):
+    uid = request.state.uid
     """Get a calendar meeting by its Firestore document ID"""
     meeting = calendar_db.get_meeting(uid, meeting_id)
 
@@ -93,11 +89,9 @@ def get_calendar_meeting(
 
 @router.get('/v1/calendar/meetings', response_model=List[CalendarMeetingContext], tags=['calendar'])
 def list_calendar_meetings(
-    uid: str = Depends(auth.get_current_user_uid),
-    start_date: Optional[datetime] = None,
-    end_date: Optional[datetime] = None,
-    limit: int = 50,
+    request: Request, start_date: Optional[datetime] = None, end_date: Optional[datetime] = None, limit: int = 50
 ):
+    uid = request.state.uid
     """List calendar meetings within a date range"""
     meetings = calendar_db.list_meetings(uid, start_date=start_date, end_date=end_date, limit=limit)
     return [CalendarMeetingContext(**m) for m in meetings]

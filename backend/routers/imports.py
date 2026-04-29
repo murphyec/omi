@@ -9,7 +9,7 @@ from typing import List, Optional
 
 from utils.executors import storage_executor
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import Request, APIRouter, Depends, File, HTTPException, UploadFile
 
 import database.import_jobs as import_jobs_db
 import database.conversations as conversations_db
@@ -23,16 +23,9 @@ router = APIRouter()
 TEMP_DIR = '_temp'
 
 
-@router.post(
-    '/v1/import/limitless',
-    response_model=ImportJobResponse,
-    tags=['import'],
-)
-async def import_limitless_data(
-    file: UploadFile = File(...),
-    language: str = 'en',
-    uid: str = Depends(auth.get_current_user_uid),
-):
+@router.post('/v1/import/limitless', response_model=ImportJobResponse, tags=['import'])
+async def import_limitless_data(request: Request, file: UploadFile = File(...), language: str = 'en'):
+    uid = request.state.uid
     """
     Start a Limitless data import from a ZIP file export.
 
@@ -75,21 +68,12 @@ async def import_limitless_data(
     # Start background processing
     storage_executor.submit(process_limitless_import, job.id, uid, zip_path, language)
 
-    return ImportJobResponse(
-        job_id=job.id,
-        status=ImportJobStatus.pending,
-    )
+    return ImportJobResponse(job_id=job.id, status=ImportJobStatus.pending)
 
 
-@router.get(
-    '/v1/import/jobs',
-    response_model=List[ImportJobResponse],
-    tags=['import'],
-)
-async def get_import_jobs(
-    uid: str = Depends(auth.get_current_user_uid),
-    limit: int = 50,
-):
+@router.get('/v1/import/jobs', response_model=List[ImportJobResponse], tags=['import'])
+async def get_import_jobs(request: Request, limit: int = 50):
+    uid = request.state.uid
     """
     Get all import jobs for the current user.
 
@@ -112,15 +96,9 @@ async def get_import_jobs(
     ]
 
 
-@router.get(
-    '/v1/import/jobs/{job_id}',
-    response_model=ImportJobResponse,
-    tags=['import'],
-)
-async def get_import_job_status(
-    job_id: str,
-    uid: str = Depends(auth.get_current_user_uid),
-):
+@router.get('/v1/import/jobs/{job_id}', response_model=ImportJobResponse, tags=['import'])
+async def get_import_job_status(request: Request, job_id: str):
+    uid = request.state.uid
     """
     Get the status of a specific import job.
 
@@ -150,13 +128,9 @@ async def get_import_job_status(
     )
 
 
-@router.delete(
-    '/v1/import/limitless/conversations',
-    tags=['import'],
-)
-async def delete_limitless_conversations(
-    uid: str = Depends(auth.get_current_user_uid),
-):
+@router.delete('/v1/import/limitless/conversations', tags=['import'])
+async def delete_limitless_conversations(request: Request):
+    uid = request.state.uid
     """
     Delete all conversations imported from Limitless.
 

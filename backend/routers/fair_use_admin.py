@@ -45,9 +45,7 @@ def _verify_admin_key(x_admin_key: str = Header(..., alias='X-Admin-Key')) -> st
 
 @router.get('/v1/admin/fair-use/flagged', tags=['admin'])
 def get_flagged_users(
-    admin_id: str = Depends(_verify_admin_key),
-    stage: Optional[str] = None,
-    limit: int = Query(default=50, le=200),
+    admin_id: str = Depends(_verify_admin_key), stage: Optional[str] = None, limit: int = Query(default=50, le=200)
 ):
     """Get users with active fair-use enforcement."""
     users = fair_use_db.get_flagged_users(stage_filter=stage, limit=limit)
@@ -107,7 +105,8 @@ def set_user_stage(uid: str, stage: str = Query(...), admin_id: str = Depends(_v
 
 
 @router.get('/v1/admin/fair-use/case/{case_ref}', tags=['admin'])
-def lookup_case(case_ref: str, admin_id: str = Depends(_verify_admin_key)):
+def lookup_case(request: Request, case_ref: str, admin_id: str = Depends(_verify_admin_key)):
+    uid = request.state.uid
     """Look up a fair-use event by case reference (for support team)."""
     # Search across all users' events for this case_ref
     query = db.collection_group('fair_use_events').where('case_ref', '==', case_ref).limit(1)

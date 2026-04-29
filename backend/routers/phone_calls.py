@@ -84,9 +84,9 @@ class TokenResponse(BaseModel):
 @router.post("/v1/phone/numbers/verify", response_model=VerifyPhoneNumberResponse, tags=['phone-calls'])
 def verify_phone_number(
     request: VerifyPhoneNumberRequest,
-    uid: str = Depends(auth.get_current_user_uid),
     _: None = Depends(rate_limit_dependency(endpoint="phone_verify", requests_per_window=5, window_seconds=3600)),
 ):
+    uid = request.state.uid
     """Initiate phone number verification via Twilio caller ID validation."""
     check_call_access(uid)
     phone_number = request.phone_number.strip()
@@ -129,11 +129,11 @@ def verify_phone_number(
 @router.post("/v1/phone/numbers/verify/check", response_model=CheckVerificationResponse, tags=['phone-calls'])
 def check_phone_verification(
     request: CheckVerificationRequest,
-    uid: str = Depends(auth.get_current_user_uid),
     _rate_limit=Depends(
         rate_limit_dependency(endpoint="phone_verify_check", requests_per_window=30, window_seconds=60)
     ),
 ):
+    uid = request.state.uid
     """Check if a phone number has been verified. Poll this endpoint every 2s (60s timeout)."""
     check_call_access(uid)
     phone_number = request.phone_number.strip()
@@ -172,7 +172,8 @@ def check_phone_verification(
 
 
 @router.get("/v1/phone/numbers", tags=['phone-calls'])
-def list_phone_numbers(uid: str = Depends(auth.get_current_user_uid)):
+def list_phone_numbers(request: Request):
+    uid = request.state.uid
     """List all verified phone numbers for the user."""
     check_call_access(uid)
     numbers = phone_calls_db.get_phone_numbers(uid)
@@ -180,7 +181,8 @@ def list_phone_numbers(uid: str = Depends(auth.get_current_user_uid)):
 
 
 @router.delete("/v1/phone/numbers/{phone_number_id}", tags=['phone-calls'])
-def remove_phone_number(phone_number_id: str, uid: str = Depends(auth.get_current_user_uid)):
+def remove_phone_number(request: Request, phone_number_id: str):
+    uid = request.state.uid
     """Remove a verified phone number."""
     check_call_access(uid)
     phone_number = phone_calls_db.get_phone_number(uid, phone_number_id)
@@ -202,7 +204,8 @@ def remove_phone_number(phone_number_id: str, uid: str = Depends(auth.get_curren
 
 
 @router.post("/v1/phone/token", response_model=TokenResponse, tags=['phone-calls'])
-def get_phone_token(uid: str = Depends(auth.get_current_user_uid)):
+def get_phone_token(request: Request):
+    uid = request.state.uid
     """Generate a Twilio access token for making VoIP calls."""
     check_call_access(uid)
     # Verify user has at least one verified number
