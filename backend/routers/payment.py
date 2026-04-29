@@ -369,15 +369,15 @@ def get_overage_info_endpoint(request: Request):
 
 
 @router.post('/v1/payments/checkout-session')
-def create_checkout_session_endpoint(request: CreateCheckoutRequest):
+def create_checkout_session_endpoint(request: Request, data: CreateCheckoutRequest):
     # Check if user can make a new payment
     uid = request.state.uid
-    can_pay, reason = subscription_utils.can_user_make_payment(uid, request.price_id)
+    can_pay, reason = subscription_utils.can_user_make_payment(uid, data.price_id)
     if not can_pay:
         raise HTTPException(status_code=400, detail=reason)
 
     # Try to reactivate canceled subscription (Scenario A)
-    reactivation_result = _try_reactivate_subscription(uid, request.price_id)
+    reactivation_result = _try_reactivate_subscription(uid, data.price_id)
     if reactivation_result:
         return reactivation_result
 
@@ -385,7 +385,7 @@ def create_checkout_session_endpoint(request: CreateCheckoutRequest):
     idempotency_key = str(uuid.uuid4())
     existing_customer_id = users_db.get_stripe_customer_id(uid)
     session = stripe_utils.create_subscription_checkout_session(
-        uid, request.price_id, idempotency_key, customer_id=existing_customer_id
+        uid, data.price_id, idempotency_key, customer_id=existing_customer_id
     )
     if not session:
         raise HTTPException(status_code=500, detail="Could not create checkout session.")
@@ -393,7 +393,7 @@ def create_checkout_session_endpoint(request: CreateCheckoutRequest):
 
 
 @router.post('/v1/payments/upgrade-subscription')
-def upgrade_subscription_endpoint(request: UpgradeSubscriptionRequest):
+def upgrade_subscription_endpoint(request: Request, data: UpgradeSubscriptionRequest):
     uid = request.state.uid
     """Upgrade or change a user's subscription plan.
 
@@ -417,14 +417,14 @@ def upgrade_subscription_endpoint(request: UpgradeSubscriptionRequest):
         current_item_id = stripe_sub['items']['data'][0]['id']
 
         # Check if user is trying to upgrade to the same plan
-        if current_price_id == request.price_id:
+        if current_price_id == data.price_id:
             raise HTTPException(
                 status_code=400,
                 detail="You are already subscribed to this plan. Please select a different plan to upgrade or downgrade.",
             )
 
-        target_plan = get_plan_type_from_price_id(request.price_id)
-        target_price = stripe.Price.retrieve(request.price_id)
+        target_plan = get_plan_type_from_price_id(data.price_id)
+        target_price = stripe.Price.retrieve(data.price_id)
         target_interval = target_price.recurring.interval  # "month" or "year"
         current_plan = get_plan_type_from_price_id(current_price_id)
 
@@ -439,7 +439,7 @@ def upgrade_subscription_endpoint(request: UpgradeSubscriptionRequest):
         if current_plan != target_plan:
             updated_sub = stripe.Subscription.modify(
                 stripe_sub['id'],
-                items=[{'id': current_item_id, 'price': request.price_id}],
+                items=[{'id': current_item_id, 'price': data.price_id}],
                 proration_behavior='always_invoice',
                 metadata={'uid': uid, 'sub_type': target_plan.value},
             )
@@ -484,7 +484,7 @@ def upgrade_subscription_endpoint(request: UpgradeSubscriptionRequest):
                 {
                     'items': [
                         {
-                            'price': request.price_id,
+                            'price': data.price_id,
                         }
                     ],
                 },
@@ -518,15 +518,15 @@ class CancelSubscriptionRequest(BaseModel):
 
 
 @router.delete('/v1/payments/subscription')
-def cancel_subscription_endpoint(request: CancelSubscriptionRequest = CancelSubscriptionRequest()):
+def cancel_subscription_endpoint(request: Request, data: CancelSubscriptionRequest = CancelSubscriptionRequest()):
     uid = request.state.uid
     subscription = users_db.get_user_subscription(uid)
     if not subscription.stripe_subscription_id:
         raise HTTPException(status_code=400, detail="No active Stripe subscription found.")
 
     # Store cancellation reason
-    if request.reason:
-        users_db.set_user_cancellation_feedback(uid, request.reason, request.reason_details)
+    if data.reason:
+        users_db.set_user_cancellation_feedback(uid, data.reason, data.reason_details)
 
     try:
         # First, check if the subscription is managed by a subscription schedule

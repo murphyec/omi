@@ -248,13 +248,13 @@ class ProgressExtractRequest(BaseModel):
 @router.post(
     '/v1/goals/extract-progress', tags=['goals'], dependencies=[Depends(auth.with_rate_limit("goals:extract"))]
 )
-async def extract_and_update_progress(request: ProgressExtractRequest) -> dict:
+async def extract_and_update_progress(request: Request, data: ProgressExtractRequest) -> dict:
     uid = request.state.uid
     """
     Extract goal progress from conversation/chat text and update if found.
     Uses LLM to understand context and extract numeric progress.
     """
-    result = extract_and_update_goal_progress(uid, request.text)
+    result = extract_and_update_goal_progress(uid, data.text)
     if result is None:
         return {'updated': False, 'reason': 'No active goal'}
 

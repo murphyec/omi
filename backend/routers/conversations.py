@@ -73,7 +73,7 @@ class ProcessConversationRequest(BaseModel):
     tags=['conversations'],
     dependencies=[Depends(auth.with_rate_limit("conversations:create"))],
 )
-def process_in_progress_conversation(request: ProcessConversationRequest = None):
+def process_in_progress_conversation(request: Request, data: ProcessConversationRequest = None):
     uid = request.state.uid
     conversation = retrieve_in_progress_conversation(uid)
     if not conversation:
@@ -83,10 +83,10 @@ def process_in_progress_conversation(request: ProcessConversationRequest = None)
     conversation = deserialize_conversation(conversation)
 
     # Inject calendar context if provided
-    if request and request.calendar_meeting_context:
+    if data and data.calendar_meeting_context:
         if not conversation.external_data:
             conversation.external_data = {}
-        conversation.external_data['calendar_meeting_context'] = request.calendar_meeting_context.dict()
+        conversation.external_data['calendar_meeting_context'] = data.calendar_meeting_context.dict()
 
     # Geolocation
     geolocation = redis_db.get_cached_user_geolocation(uid)
@@ -553,7 +553,10 @@ def set_assignee_conversation_segment(
 @router.patch(
     '/v1/conversations/{conversation_id}/segments/assign-bulk', response_model=Conversation, tags=['conversations']
 )
-def assign_segments_bulk(conversation_id: str, data: BulkAssignSegmentsRequest, background_tasks: BackgroundTasks):
+def assign_segments_bulk(
+    request: Request, conversation_id: str, data: BulkAssignSegmentsRequest, background_tasks: BackgroundTasks
+):
+    uid = request.state.uid
     conversation = _get_valid_conversation_by_id(uid, conversation_id)
     conversation = deserialize_conversation(conversation)
 
@@ -654,7 +657,8 @@ def get_shared_conversation_by_id(conversation_id: str):
     tags=['conversations'],
     dependencies=[Depends(auth.with_rate_limit("conversations:search"))],
 )
-def search_conversations_endpoint(search_request: SearchRequest):
+def search_conversations_endpoint(request: Request, search_request: SearchRequest):
+    uid = request.state.uid
     # Convert ISO datetime strings to Unix timestamps if provided
     start_timestamp = None
     end_timestamp = None
@@ -717,7 +721,7 @@ def get_conversation_suggested_apps(request: Request, conversation_id: str):
     tags=['conversations'],
     dependencies=[Depends(auth.with_rate_limit("test:prompt"))],
 )
-def test_prompt(conversation_id: str, request: TestPromptRequest):
+def test_prompt(request: Request, conversation_id: str, data: TestPromptRequest):
     uid = request.state.uid
     conversation_data = _get_valid_conversation_by_id(uid, conversation_id)
     conversation = deserialize_conversation(conversation_data)
@@ -728,7 +732,7 @@ def test_prompt(conversation_id: str, request: TestPromptRequest):
         raise HTTPException(status_code=400, detail="Conversation has no text content to summarize.")
 
     # Pass language code from conversation to match app behavior
-    summary = generate_summary_with_prompt(full_transcript, request.prompt, language_code=conversation.language or 'en')
+    summary = generate_summary_with_prompt(full_transcript, data.prompt, language_code=conversation.language or 'en')
 
     return {"summary": summary}
 
@@ -744,7 +748,7 @@ def test_prompt(conversation_id: str, request: TestPromptRequest):
     tags=['conversations'],
     dependencies=[Depends(auth.with_rate_limit("conversations:merge"))],
 )
-async def merge_conversations(request: MergeConversationsRequest, background_tasks: BackgroundTasks):
+async def merge_conversations(request: Request, data: MergeConversationsRequest, background_tasks: BackgroundTasks):
     """
     Merge multiple conversations into a new conversation (async).
 
@@ -761,15 +765,16 @@ async def merge_conversations(request: MergeConversationsRequest, background_tas
     - Copied audio chunks
     - Regenerated title, summary, action items, memories via process_conversation()
     """
+    uid = request.state.uid
     from utils.conversations.merge_conversations import validate_merge_compatibility, perform_merge_async
 
     # Validate minimum number of conversations
-    if len(request.conversation_ids) < 2:
+    if len(data.conversation_ids) < 2:
         raise HTTPException(status_code=400, detail="At least 2 conversations required to merge")
 
     # Fetch all conversations
     conversations = []
-    for conv_id in request.conversation_ids:
+    for conv_id in data.conversation_ids:
         conv = conversations_db.get_conversation(uid, conv_id)
         if conv is None:
             raise HTTPException(status_code=404, detail=f"Conversation {conv_id} not found")
@@ -781,14 +786,14 @@ async def merge_conversations(request: MergeConversationsRequest, background_tas
         raise HTTPException(status_code=400, detail=error_message)
 
     # Set all source conversations to 'merging' status so user knows they're being processed
-    for conv_id in request.conversation_ids:
+    for conv_id in data.conversation_ids:
         conversations_db.update_conversation_status(uid, conv_id, ConversationStatus.merging)
 
     # Start background merge task
     background_tasks.add_task(
-        perform_merge_async, uid=uid, conversation_ids=request.conversation_ids, reprocess=request.reprocess
+        perform_merge_async, uid=uid, conversation_ids=data.conversation_ids, reprocess=data.reprocess
     )
 
     return MergeConversationsResponse(
-        status="merging", message="Merge started", warning=warning_message, conversation_ids=request.conversation_ids
+        status="merging", message="Merge started", warning=warning_message, conversation_ids=data.conversation_ids
     )

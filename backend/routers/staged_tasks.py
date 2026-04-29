@@ -41,17 +41,17 @@ class BatchUpdateScoresRequest(BaseModel):
 
 
 @router.post('/v1/staged-tasks', tags=['staged-tasks'])
-def create_staged_task(request: CreateStagedTaskRequest):
+def create_staged_task(request: Request, data: CreateStagedTaskRequest):
     uid = request.state.uid
     return staged_tasks_db.create_staged_task(
         uid,
-        description=request.description,
-        due_at=request.due_at,
-        source=request.source,
-        priority=request.priority,
-        metadata=request.metadata,
-        category=request.category,
-        relevance_score=request.relevance_score,
+        description=data.description,
+        due_at=data.due_at,
+        source=data.source,
+        priority=data.priority,
+        metadata=data.metadata,
+        category=data.category,
+        relevance_score=data.relevance_score,
     )
 
 
@@ -74,9 +74,9 @@ def delete_staged_task(request: Request, task_id: str):
 
 
 @router.patch('/v1/staged-tasks/batch-scores', tags=['staged-tasks'])
-def batch_update_staged_scores(request: BatchUpdateScoresRequest):
+def batch_update_staged_scores(request: Request, data: BatchUpdateScoresRequest):
     uid = request.state.uid
-    staged_tasks_db.batch_update_staged_scores(uid, [s.model_dump() for s in request.scores])
+    staged_tasks_db.batch_update_staged_scores(uid, [s.model_dump() for s in data.scores])
     return {'status': 'ok'}
 
 

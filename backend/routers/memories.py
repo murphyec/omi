@@ -83,7 +83,7 @@ async def create_memory(request: Request, memory: Memory):
     response_model=BatchMemoriesResponse,
     dependencies=[Depends(auth.with_rate_limit("memories:batch"))],
 )
-async def create_memories_batch(request: BatchMemoriesRequest):
+async def create_memories_batch(request: Request, data: BatchMemoriesRequest):
     uid = request.state.uid
     """
     Create many memories in a single request.
@@ -96,14 +96,14 @@ async def create_memories_batch(request: BatchMemoriesRequest):
     One HTTP request here = one Firestore batch write + one embeddings call +
     one Pinecone upsert, regardless of batch size.
     """
-    if not request.memories:
+    if not data.memories:
         return BatchMemoriesResponse(memories=[], created_count=0)
 
     # Hardcode category to manual to match the single-create endpoint. Callers
     # that need auto-categorization should use the dev API.
     memory_dbs: List[MemoryDB] = []
     has_public = False
-    for memory in request.memories:
+    for memory in data.memories:
         memory.category = MemoryCategory.manual
         memory_db = MemoryDB.from_memory(memory, uid, None, True)
         memory_dbs.append(memory_db)
@@ -112,8 +112,7 @@ async def create_memories_batch(request: BatchMemoriesRequest):
 
     # Firestore batch write + Pinecone batch upsert run on a worker thread so a
     # slow embeddings/Pinecone call can't starve the FastAPI sync threadpool.
-    def _persist(request: Request):
-        uid = request.state.uid
+    def _persist():
         memories_db.save_memories(uid, [m.dict() for m in memory_dbs])
         upsert_memory_vectors_batch(
             uid,

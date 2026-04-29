@@ -18,10 +18,10 @@ Endpoints:
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 
-from utils.other.endpoints import get_current_user_uid, with_rate_limit
+from utils.other.endpoints import with_rate_limit
 from utils.retrieval.tool_services.conversations import get_conversations_text, search_conversations_text
 from utils.retrieval.tool_services.memories import get_memories_text, search_memories_text
 from utils.retrieval.tool_services.action_items import (
@@ -81,13 +81,14 @@ class UpdateActionItemRequest(BaseModel):
 
 @router.get("/v1/tools/conversations", response_model=ToolResponse)
 def get_conversations(
+    request: Request,
     start_date: Optional[str] = Query(default=None, description="ISO date with timezone"),
     end_date: Optional[str] = Query(default=None, description="ISO date with timezone"),
     limit: int = Query(default=20, ge=1, le=5000),
     offset: int = Query(default=0, ge=0),
     include_transcript: bool = Query(default=True),
-    uid: str = Depends(get_current_user_uid),
 ):
+    uid = request.state.uid
     result = get_conversations_text(
         uid=uid,
         start_date=start_date,
@@ -99,10 +100,13 @@ def get_conversations(
     return _ok("get_conversations", result)
 
 
-@router.post("/v1/tools/conversations/search", response_model=ToolResponse)
-def search_conversations(
-    body: SearchConversationsRequest, uid: str = Depends(with_rate_limit(get_current_user_uid, "tools:search"))
-):
+@router.post(
+    "/v1/tools/conversations/search",
+    response_model=ToolResponse,
+    dependencies=[Depends(with_rate_limit("tools:search"))],
+)
+def search_conversations(request: Request, body: SearchConversationsRequest):
+    uid = request.state.uid
     result = search_conversations_text(
         uid=uid,
         query=body.query,
@@ -119,20 +123,24 @@ def search_conversations(
 
 @router.get("/v1/tools/memories", response_model=ToolResponse)
 def get_memories(
+    request: Request,
     limit: int = Query(default=50, ge=1, le=5000),
     offset: int = Query(default=0, ge=0),
     start_date: Optional[str] = Query(default=None, description="ISO date with timezone"),
     end_date: Optional[str] = Query(default=None, description="ISO date with timezone"),
-    uid: str = Depends(get_current_user_uid),
 ):
+    uid = request.state.uid
     result = get_memories_text(uid=uid, limit=limit, offset=offset, start_date=start_date, end_date=end_date)
     return _ok("get_memories", result)
 
 
-@router.post("/v1/tools/memories/search", response_model=ToolResponse)
-def search_memories(
-    body: SearchMemoriesRequest, uid: str = Depends(with_rate_limit(get_current_user_uid, "tools:search"))
-):
+@router.post(
+    "/v1/tools/memories/search",
+    response_model=ToolResponse,
+    dependencies=[Depends(with_rate_limit("tools:search"))],
+)
+def search_memories(request: Request, body: SearchMemoriesRequest):
+    uid = request.state.uid
     result = search_memories_text(uid=uid, query=body.query, limit=body.limit)
     return _ok("search_memories", result)
 
@@ -142,6 +150,7 @@ def search_memories(
 
 @router.get("/v1/tools/action-items", response_model=ToolResponse)
 def get_action_items(
+    request: Request,
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     completed: Optional[bool] = Query(default=None),
@@ -150,8 +159,8 @@ def get_action_items(
     end_date: Optional[str] = Query(default=None, description="ISO date with timezone"),
     due_start_date: Optional[str] = Query(default=None, description="ISO date with timezone"),
     due_end_date: Optional[str] = Query(default=None, description="ISO date with timezone"),
-    uid: str = Depends(get_current_user_uid),
 ):
+    uid = request.state.uid
     result = get_action_items_text(
         uid=uid,
         limit=limit,
@@ -166,22 +175,26 @@ def get_action_items(
     return _ok("get_action_items", result)
 
 
-@router.post("/v1/tools/action-items", response_model=ToolResponse)
-def create_action_item(
-    body: CreateActionItemRequest, uid: str = Depends(with_rate_limit(get_current_user_uid, "tools:mutate"))
-):
+@router.post(
+    "/v1/tools/action-items",
+    response_model=ToolResponse,
+    dependencies=[Depends(with_rate_limit("tools:mutate"))],
+)
+def create_action_item(request: Request, body: CreateActionItemRequest):
+    uid = request.state.uid
     result = create_action_item_text(
         uid=uid, description=body.description, due_at=body.due_at, conversation_id=body.conversation_id
     )
     return _ok("create_action_item", result)
 
 
-@router.patch("/v1/tools/action-items/{action_item_id}", response_model=ToolResponse)
-def update_action_item(
-    action_item_id: str,
-    body: UpdateActionItemRequest,
-    uid: str = Depends(with_rate_limit(get_current_user_uid, "tools:mutate")),
-):
+@router.patch(
+    "/v1/tools/action-items/{action_item_id}",
+    response_model=ToolResponse,
+    dependencies=[Depends(with_rate_limit("tools:mutate"))],
+)
+def update_action_item(request: Request, action_item_id: str, body: UpdateActionItemRequest):
+    uid = request.state.uid
     result = update_action_item_text(
         uid=uid,
         action_item_id=action_item_id,

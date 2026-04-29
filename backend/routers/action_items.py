@@ -99,11 +99,11 @@ class BatchUpdateActionItemsRequest(BaseModel):
 
 
 @router.patch("/v1/action-items/batch", tags=['action-items'])
-def batch_update_action_items(request: BatchUpdateActionItemsRequest):
+def batch_update_action_items(request: Request, data: BatchUpdateActionItemsRequest):
     uid = request.state.uid
     """Batch update sort_order and indent_level for multiple action items."""
-    action_items_db.batch_update_action_items(uid, request.items)
-    return {"status": "ok", "updated_count": len(request.items)}
+    action_items_db.batch_update_action_items(uid, data.items)
+    return {"status": "ok", "updated_count": len(data.items)}
 
 
 # *****************************
@@ -139,21 +139,21 @@ def get_pending_sync_items(request: Request, platform: str = Query('apple_remind
 
 
 @router.patch("/v1/action-items/sync-batch", tags=['action-items'])
-def sync_batch_update(request: SyncBatchRequest):
+def sync_batch_update(request: Request, data: SyncBatchRequest):
     uid = request.state.uid
     """Batch update action items during reminders sync. Single Firestore batch commit."""
-    if not request.items:
+    if not data.items:
         return {"status": "ok", "updated_count": 0}
 
     # Pre-fetch items to skip locked ones
     locked_ids = set()
-    for item in request.items:
+    for item in data.items:
         existing = action_items_db.get_action_item(uid, item.id)
         if existing and existing.get('is_locked', False):
             locked_ids.add(item.id)
 
     updates = []
-    for item in request.items:
+    for item in data.items:
         if item.id in locked_ids:
             continue
         update_data = {}
@@ -193,14 +193,14 @@ def sync_batch_update(request: SyncBatchRequest):
 
 
 @router.post("/v1/action-items", response_model=ActionItemResponse, tags=['action-items'])
-def create_action_item(request: CreateActionItemRequest):
+def create_action_item(request: Request, data: CreateActionItemRequest):
     uid = request.state.uid
     """Create a new action item."""
     action_item_data = {
-        'description': request.description,
-        'completed': request.completed,
-        'due_at': request.due_at,
-        'conversation_id': request.conversation_id,
+        'description': data.description,
+        'completed': data.completed,
+        'due_at': data.due_at,
+        'conversation_id': data.conversation_id,
     }
 
     action_item_id = action_items_db.create_action_item(uid, action_item_data)
@@ -210,18 +210,17 @@ def create_action_item(request: CreateActionItemRequest):
         raise HTTPException(status_code=500, detail="Failed to create action item")
 
     # Send FCM data message if action item has a due date
-    if request.due_at:
+    if data.due_at:
         send_action_item_data_message(
             user_id=uid,
             action_item_id=action_item_id,
-            description=request.description,
-            due_at=request.due_at.isoformat(),
+            description=data.description,
+            due_at=data.due_at.isoformat(),
         )
 
-    upsert_action_item_vector(uid, action_item_id, request.description)
+    upsert_action_item_vector(uid, action_item_id, data.description)
 
-    def _run_auto_sync(request: Request):
-        uid = request.state.uid
+    def _run_auto_sync():
         asyncio.run(auto_sync_action_item(uid, {"id": action_item_id, **action_item_data}, skip_apple_reminders=True))
 
     critical_executor.submit(_run_auto_sync)
@@ -231,6 +230,7 @@ def create_action_item(request: CreateActionItemRequest):
 
 @router.get("/v1/action-items", tags=['action-items'])
 def get_action_items(
+    request: Request,
     limit: int = Query(50, ge=1, le=500, description="Maximum number of action items to return"),
     offset: int = Query(0, ge=0, description="Number of action items to skip"),
     completed: Optional[bool] = Query(None, description="Filter by completion status"),
@@ -240,6 +240,7 @@ def get_action_items(
     due_start_date: Optional[datetime] = Query(None, description="Filter by due start date (inclusive)"),
     due_end_date: Optional[datetime] = Query(None, description="Filter by due end date (inclusive)"),
 ):
+    uid = request.state.uid
     """Get action items for the current user."""
     action_items = action_items_db.get_action_items(
         uid=uid,
@@ -308,7 +309,7 @@ def get_action_item(request: Request, action_item_id: str):
 
 
 @router.patch("/v1/action-items/{action_item_id}", response_model=ActionItemResponse, tags=['action-items'])
-def update_action_item(action_item_id: str, request: UpdateActionItemRequest):
+def update_action_item(request: Request, action_item_id: str, data: UpdateActionItemRequest):
     uid = request.state.uid
     """Update an action item."""
     # Check if action item exists
@@ -318,42 +319,42 @@ def update_action_item(action_item_id: str, request: UpdateActionItemRequest):
 
     # Prepare update data
     update_data = {}
-    if request.description is not None:
-        update_data['description'] = request.description
-    if request.completed is not None:
-        update_data['completed'] = request.completed
-        if request.completed:
+    if data.description is not None:
+        update_data['description'] = data.description
+    if data.completed is not None:
+        update_data['completed'] = data.completed
+        if data.completed:
             update_data['completed_at'] = datetime.now(timezone.utc)
         else:
             update_data['completed_at'] = None
     # Check if due_at was explicitly provided (even if None) to allow clearing
     # In Pydantic v2, we check model_fields_set to see if field was explicitly set
-    if 'due_at' in request.model_fields_set:
+    if 'due_at' in data.model_fields_set:
         # Field was explicitly provided (even if None) - update it
-        update_data['due_at'] = request.due_at
-    elif request.due_at is not None:
+        update_data['due_at'] = data.due_at
+    elif data.due_at is not None:
         # Fallback: only update if not None (for backwards compatibility)
-        update_data['due_at'] = request.due_at
-    if request.exported is not None:
-        update_data['exported'] = request.exported
-    if request.export_date is not None:
-        update_data['export_date'] = request.export_date
-    if request.export_platform is not None:
-        update_data['export_platform'] = request.export_platform
-    if request.apple_reminder_id is not None:
-        update_data['apple_reminder_id'] = request.apple_reminder_id
-    if request.sort_order is not None:
-        update_data['sort_order'] = request.sort_order
-    if request.indent_level is not None:
-        update_data['indent_level'] = request.indent_level
+        update_data['due_at'] = data.due_at
+    if data.exported is not None:
+        update_data['exported'] = data.exported
+    if data.export_date is not None:
+        update_data['export_date'] = data.export_date
+    if data.export_platform is not None:
+        update_data['export_platform'] = data.export_platform
+    if data.apple_reminder_id is not None:
+        update_data['apple_reminder_id'] = data.apple_reminder_id
+    if data.sort_order is not None:
+        update_data['sort_order'] = data.sort_order
+    if data.indent_level is not None:
+        update_data['indent_level'] = data.indent_level
 
     # Update the action item
     success = action_items_db.update_action_item(uid, action_item_id, update_data)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update action item")
 
-    if request.description is not None:
-        upsert_action_item_vector(uid, action_item_id, request.description)
+    if data.description is not None:
+        upsert_action_item_vector(uid, action_item_id, data.description)
 
     # Return updated action item
     updated_item = action_items_db.get_action_item(uid, action_item_id)
@@ -537,11 +538,11 @@ class AcceptSharedTasksRequest(BaseModel):
 
 
 @router.post("/v1/action-items/share", tags=['action-items'])
-def share_action_items(request: ShareTasksRequest):
+def share_action_items(request: Request, data: ShareTasksRequest):
     uid = request.state.uid
     """Create a shareable link for selected action items."""
     # Validate all task_ids belong to user and are not locked
-    for task_id in request.task_ids:
+    for task_id in data.task_ids:
         item = action_items_db.get_action_item(uid, task_id)
         if not item:
             raise HTTPException(status_code=404, detail=f"Action item {task_id} not found")
@@ -553,7 +554,7 @@ def share_action_items(request: ShareTasksRequest):
 
     # Generate token and store in Redis
     token = uuid.uuid4().hex
-    result = redis_db.store_task_share(token, uid, display_name, request.task_ids)
+    result = redis_db.store_task_share(token, uid, display_name, data.task_ids)
     if result is None:
         raise HTTPException(status_code=500, detail="Failed to create share link")
 
@@ -561,8 +562,7 @@ def share_action_items(request: ShareTasksRequest):
 
 
 @router.get("/v1/action-items/shared/{token}", tags=['action-items'])
-def get_shared_action_items(request: Request, token: str):
-    uid = request.state.uid
+def get_shared_action_items(token: str):
     """Public endpoint — get shared task preview (no auth required)."""
     share_data = redis_db.get_task_share(token)
     if not share_data:
@@ -591,10 +591,10 @@ def get_shared_action_items(request: Request, token: str):
 
 
 @router.post("/v1/action-items/accept", tags=['action-items'])
-def accept_shared_action_items(request: AcceptSharedTasksRequest):
+def accept_shared_action_items(request: Request, data: AcceptSharedTasksRequest):
     uid = request.state.uid
     """Save shared tasks to the recipient's task list."""
-    share_data = redis_db.get_task_share(request.token)
+    share_data = redis_db.get_task_share(data.token)
     if not share_data:
         raise HTTPException(status_code=404, detail="Share link expired or not found")
 
@@ -616,7 +616,7 @@ def accept_shared_action_items(request: AcceptSharedTasksRequest):
         raise HTTPException(status_code=402, detail="All shared tasks are locked. A paid plan is required.")
 
     # Atomically check and mark acceptance to prevent duplicates
-    accepted = redis_db.try_accept_task_share(request.token, uid)
+    accepted = redis_db.try_accept_task_share(data.token, uid)
     if accepted is None:
         raise HTTPException(status_code=503, detail="Service temporarily unavailable")
     if not accepted:
@@ -634,7 +634,7 @@ def accept_shared_action_items(request: AcceptSharedTasksRequest):
             'completed': False,
             'due_at': original.get('due_at'),
             'shared_from': {
-                'token': request.token,
+                'token': data.token,
                 'sender_uid': sender_uid,
                 'sender_name': share_data['display_name'],
                 'original_task_id': task_id,
@@ -646,7 +646,7 @@ def accept_shared_action_items(request: AcceptSharedTasksRequest):
 
     # If race condition caused all items to become locked after pre-check, rollback token
     if not created_ids:
-        redis_db.undo_accept_task_share(request.token, uid)
+        redis_db.undo_accept_task_share(data.token, uid)
         raise HTTPException(status_code=402, detail="Shared tasks are no longer available.")
 
     return {"created": created_ids, "count": len(created_ids)}

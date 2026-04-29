@@ -83,13 +83,14 @@ class TokenResponse(BaseModel):
 
 @router.post("/v1/phone/numbers/verify", response_model=VerifyPhoneNumberResponse, tags=['phone-calls'])
 def verify_phone_number(
-    request: VerifyPhoneNumberRequest,
+    request: Request,
+    data: VerifyPhoneNumberRequest,
     _: None = Depends(rate_limit_dependency(endpoint="phone_verify", requests_per_window=5, window_seconds=3600)),
 ):
     uid = request.state.uid
     """Initiate phone number verification via Twilio caller ID validation."""
     check_call_access(uid)
-    phone_number = request.phone_number.strip()
+    phone_number = data.phone_number.strip()
     if not E164_PATTERN.match(phone_number):
         raise HTTPException(status_code=400, detail="Phone number must be in E.164 format (e.g., +15551234567)")
 
@@ -128,7 +129,8 @@ def verify_phone_number(
 
 @router.post("/v1/phone/numbers/verify/check", response_model=CheckVerificationResponse, tags=['phone-calls'])
 def check_phone_verification(
-    request: CheckVerificationRequest,
+    request: Request,
+    data: CheckVerificationRequest,
     _rate_limit=Depends(
         rate_limit_dependency(endpoint="phone_verify_check", requests_per_window=30, window_seconds=60)
     ),
@@ -136,7 +138,7 @@ def check_phone_verification(
     uid = request.state.uid
     """Check if a phone number has been verified. Poll this endpoint every 2s (60s timeout)."""
     check_call_access(uid)
-    phone_number = request.phone_number.strip()
+    phone_number = data.phone_number.strip()
 
     # Check if already stored locally (avoid duplicates from repeated polling)
     existing = phone_calls_db.get_phone_number_by_number(uid, phone_number)

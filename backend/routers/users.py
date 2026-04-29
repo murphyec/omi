@@ -136,13 +136,13 @@ def _background_wipe_user_data(uid: str):
 
 
 @router.delete('/v1/users/delete-account', tags=['v1'])
-def delete_account(request: DeleteAccountRequest = DeleteAccountRequest()):
+def delete_account(request: Request, data: DeleteAccountRequest = DeleteAccountRequest()):
     uid = request.state.uid
     try:
         # 1. Persist deletion feedback first (top-level collection survives wipe).
-        if request.reason or request.reason_details:
+        if data.reason or data.reason_details:
             try:
-                users_db.set_user_deletion_feedback(uid, request.reason, request.reason_details)
+                users_db.set_user_deletion_feedback(uid, data.reason, data.reason_details)
             except Exception as e:
                 logger.info(f'delete_account feedback store failed: {sanitize(str(e))}')
 
@@ -159,7 +159,7 @@ def delete_account(request: DeleteAccountRequest = DeleteAccountRequest()):
 
         # 3. Wipe Firestore subcollections in the background — can take minutes
         #    for heavy users and would otherwise time out at the load balancer.
-        threading.Thread(target=_background_wipe_user_data, args=(uid), daemon=True).start()
+        threading.Thread(target=_background_wipe_user_data, args=(uid,), daemon=True).start()
 
         return {'status': 'ok', 'message': 'Account deletion started'}
     except Exception as e:
@@ -606,43 +606,43 @@ def update_transcription_preferences_endpoint(request: Request, data: Transcript
 
 
 @router.post('/v1/users/migration/requests', tags=['v1'])
-def handle_migration_requests(request: Union[MigrationRequest, MigrationTargetRequest]):
+def handle_migration_requests(request: Request, data: Union[MigrationRequest, MigrationTargetRequest]):
     uid = request.state.uid
     """
     Handles data migration requests.
     - If 'id' and 'type' are present, it migrates a single object.
     - Otherwise, it initiates the data migration process for a 'target_level'.
     """
-    if isinstance(request, MigrationRequest):
+    if isinstance(data, MigrationRequest):
         # This is for migrating a single object
-        if request.type == 'conversation':
+        if data.type == 'conversation':
             try:
-                conversations_db.migrate_conversations_level_batch(uid, [request.id], request.target_level)
+                conversations_db.migrate_conversations_level_batch(uid, [data.id], data.target_level)
                 return {'status': 'ok'}
             except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Failed to migrate conversation {request.id}: {e}")
-        elif request.type == 'memory':
+                raise HTTPException(status_code=500, detail=f"Failed to migrate conversation {data.id}: {e}")
+        elif data.type == 'memory':
             try:
-                memories_db.migrate_memories_level_batch(uid, [request.id], request.target_level)
+                memories_db.migrate_memories_level_batch(uid, [data.id], data.target_level)
                 return {'status': 'ok'}
             except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Failed to migrate memory {request.id}: {e}")
-        elif request.type == 'chat':
+                raise HTTPException(status_code=500, detail=f"Failed to migrate memory {data.id}: {e}")
+        elif data.type == 'chat':
             try:
-                chat_db.migrate_chats_level_batch(uid, [request.id], request.target_level)
+                chat_db.migrate_chats_level_batch(uid, [data.id], data.target_level)
                 return {'status': 'ok'}
             except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Failed to migrate chat message {request.id}: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to migrate chat message {data.id}: {e}")
         else:
-            raise HTTPException(status_code=400, detail=f"Unknown object type for migration: {request.type}")
-    elif isinstance(request, MigrationTargetRequest):
+            raise HTTPException(status_code=400, detail=f"Unknown object type for migration: {data.type}")
+    elif isinstance(data, MigrationTargetRequest):
         # This is for starting the migration process
-        if request.target_level != 'enhanced':
+        if data.target_level != 'enhanced':
             raise HTTPException(
                 status_code=400, detail="Invalid target_level. Only migration to 'enhanced' is supported."
             )
 
-        set_migration_status(uid, request.target_level)
+        set_migration_status(uid, data.target_level)
         return {'status': 'ok', 'message': 'Migration status set.'}
 
 
@@ -696,14 +696,14 @@ def handle_batch_migration_requests(request: Request, batch_request: BatchMigrat
 
 
 @router.post('/v1/users/migration/requests/data-protection-level/finalize', tags=['v1'])
-def finalize_migration_request(request: MigrationTargetRequest):
+def finalize_migration_request(request: Request, data: MigrationTargetRequest):
     uid = request.state.uid
     """Finalizes the migration by setting the user's global protection level."""
-    if request.target_level != 'enhanced':
+    if data.target_level != 'enhanced':
         raise HTTPException(status_code=400, detail="Invalid target_level. Only migration to 'enhanced' is supported.")
 
-    finalize_migration(uid, request.target_level)
-    set_user_data_protection_level(uid, request.target_level)
+    finalize_migration(uid, data.target_level)
+    set_user_data_protection_level(uid, data.target_level)
     return {'status': 'ok'}
 
 
@@ -1151,7 +1151,7 @@ class TestDailySummaryRequest(BaseModel):
 
 
 @router.post('/v1/users/daily-summary-settings/test', tags=['v1'])
-def test_daily_summary(request: TestDailySummaryRequest = None):
+def test_daily_summary(request: Request, data: TestDailySummaryRequest = None):
     uid = request.state.uid
     """
     Test endpoint to manually trigger daily summary for the authenticated user.
@@ -1166,9 +1166,9 @@ def test_daily_summary(request: TestDailySummaryRequest = None):
 
     # Parse date or use today
     target_date = None
-    if request and request.date:
+    if data and data.date:
         try:
-            target_date = datetime.strptime(request.date, '%Y-%m-%d').date()
+            target_date = datetime.strptime(data.date, '%Y-%m-%d').date()
         except ValueError:
             raise HTTPException(status_code=400, detail='Invalid date format. Use YYYY-MM-DD')
 
@@ -1455,9 +1455,9 @@ def get_notification_settings(request: Request):
 
 
 @router.patch('/v1/users/notification-settings', tags=['users'])
-def update_notification_settings(request: UpdateNotificationSettingsRequest):
+def update_notification_settings(request: Request, data: UpdateNotificationSettingsRequest):
     uid = request.state.uid
-    return users_db.update_notification_settings(uid, enabled=request.enabled, frequency=request.frequency)
+    return users_db.update_notification_settings(uid, enabled=data.enabled, frequency=data.frequency)
 
 
 # ============================================================================
@@ -1530,9 +1530,9 @@ def get_assistant_settings(request: Request):
 
 
 @router.patch('/v1/users/assistant-settings', tags=['users'])
-def update_assistant_settings(request: UpdateAssistantSettingsRequest):
+def update_assistant_settings(request: Request, data: UpdateAssistantSettingsRequest):
     uid = request.state.uid
-    settings = request.model_dump(exclude_unset=True)
+    settings = data.model_dump(exclude_unset=True)
     return users_db.update_assistant_settings(uid, settings)
 
 
@@ -1554,13 +1554,13 @@ def get_ai_profile(request: Request):
 
 
 @router.patch('/v1/users/ai-profile', tags=['users'])
-def update_ai_profile(request: UpdateAIUserProfileRequest):
+def update_ai_profile(request: Request, data: UpdateAIUserProfileRequest):
     uid = request.state.uid
     return users_db.update_ai_user_profile(
         uid,
-        profile_text=request.profile_text,
-        generated_at=request.generated_at,
-        data_sources_used=request.data_sources_used,
+        profile_text=data.profile_text,
+        generated_at=data.generated_at,
+        data_sources_used=data.data_sources_used,
     )
 
 
@@ -1580,17 +1580,17 @@ class RecordLlmUsageBucketRequest(BaseModel):
 
 
 @router.post('/v1/users/me/llm-usage', tags=['users'])
-def record_llm_usage_bucket(request: RecordLlmUsageBucketRequest):
+def record_llm_usage_bucket(request: Request, data: RecordLlmUsageBucketRequest):
     uid = request.state.uid
     llm_usage_db.record_llm_usage_bucket(
         uid,
-        input_tokens=request.input_tokens,
-        output_tokens=request.output_tokens,
-        cache_read_tokens=request.cache_read_tokens,
-        cache_write_tokens=request.cache_write_tokens,
-        total_tokens=request.total_tokens,
-        cost_usd=request.cost_usd,
-        account=request.account,
+        input_tokens=data.input_tokens,
+        output_tokens=data.output_tokens,
+        cache_read_tokens=data.cache_read_tokens,
+        cache_write_tokens=data.cache_write_tokens,
+        total_tokens=data.total_tokens,
+        cost_usd=data.cost_usd,
+        account=data.account,
     )
     return {'status': 'ok'}
 

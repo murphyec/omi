@@ -20,7 +20,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from database.users import get_agent_vm
-from utils.other.endpoints import get_current_user_uid, with_rate_limit
+from utils.other.endpoints import with_rate_limit
 from utils.retrieval.agentic import agent_config_context, CORE_TOOLS
 from utils.retrieval.tools.app_tools import load_app_tools
 from utils.log_sanitizer import sanitize
@@ -143,8 +143,9 @@ async def _restart_vm_background(uid: str, vm_name: str, zone: str):
 
 
 @router.get("/v1/agent/vm-status")
-def get_vm_status(uid: str = Depends(get_current_user_uid)):
+def get_vm_status(request: Request):
     """Return the user's agent VM info from Firestore."""
+    uid = request.state.uid
     vm = get_agent_vm(uid)
     logger.info(f"[vm-status] uid={uid} vm={sanitize(vm)}")
     if not vm or vm.get("status") != "ready":
@@ -156,8 +157,9 @@ def get_vm_status(uid: str = Depends(get_current_user_uid)):
 
 
 @router.post("/v1/agent/vm-ensure")
-async def ensure_vm(background_tasks: BackgroundTasks, uid: str = Depends(get_current_user_uid)):
+async def ensure_vm(request: Request, background_tasks: BackgroundTasks):
     """Check VM status; if stopped/terminated, restart it in the background."""
+    uid = request.state.uid
     vm = get_agent_vm(uid)
     if not vm:
         return {"has_vm": False}
@@ -192,8 +194,9 @@ async def ensure_vm(background_tasks: BackgroundTasks, uid: str = Depends(get_cu
 
 
 @router.post("/v1/agent/keepalive")
-async def keepalive(uid: str = Depends(get_current_user_uid)):
+async def keepalive(request: Request):
     """Ping the VM's /ping endpoint to reset its idle auto-stop timer."""
+    uid = request.state.uid
     vm = get_agent_vm(uid)
     if not vm or vm.get("status") != "ready":
         return {"ok": False, "reason": "no_vm"}
@@ -238,8 +241,9 @@ def _tool_schema(t) -> dict:
 
 
 @router.get("/v1/agent/tools")
-def list_tools(uid: str = Depends(get_current_user_uid)):
+def list_tools(request: Request):
     """Return all available tool definitions for a user."""
+    uid = request.state.uid
     tools = []
 
     for t in CORE_TOOLS:

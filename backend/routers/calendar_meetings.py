@@ -34,34 +34,34 @@ class StoreMeetingResponse(BaseModel):
 
 
 @router.post('/v1/calendar/meetings', response_model=StoreMeetingResponse, tags=['calendar'])
-def store_calendar_meeting(request: StoreMeetingRequest):
+def store_calendar_meeting(request: Request, data: StoreMeetingRequest):
     uid = request.state.uid
     """
     Store or update a calendar meeting in Firestore.
     If a meeting with the same calendar_event_id and calendar_source exists, it will be updated.
     """
     # Calculate duration
-    duration_minutes = int((request.end_time - request.start_time).total_seconds() / 60)
+    duration_minutes = int((data.end_time - data.start_time).total_seconds() / 60)
 
     # Create CalendarMeetingContext for storage
     meeting_context = CalendarMeetingContext(
-        calendar_event_id=request.calendar_event_id,
-        title=request.title,
-        participants=request.participants,
-        platform=request.platform,
-        meeting_link=request.meeting_link,
-        start_time=request.start_time,
+        calendar_event_id=data.calendar_event_id,
+        title=data.title,
+        participants=data.participants,
+        platform=data.platform,
+        meeting_link=data.meeting_link,
+        start_time=data.start_time,
         duration_minutes=duration_minutes,
-        notes=request.notes,
-        calendar_source=request.calendar_source,
+        notes=data.notes,
+        calendar_source=data.calendar_source,
     )
 
     meeting_dict = meeting_context.dict()
-    meeting_dict['end_time'] = request.end_time
+    meeting_dict['end_time'] = data.end_time
 
     # Check if meeting already exists (by calendar_event_id + calendar_source)
     existing_meeting_id = calendar_db.get_meeting_id_by_calendar_event(
-        uid, request.calendar_event_id, request.calendar_source
+        uid, data.calendar_event_id, data.calendar_source
     )
 
     if existing_meeting_id:
@@ -72,7 +72,7 @@ def store_calendar_meeting(request: StoreMeetingRequest):
         # Create new meeting
         meeting_id = calendar_db.create_meeting(uid, meeting_dict)
 
-    return StoreMeetingResponse(meeting_id=meeting_id, calendar_event_id=request.calendar_event_id)
+    return StoreMeetingResponse(meeting_id=meeting_id, calendar_event_id=data.calendar_event_id)
 
 
 @router.get('/v1/calendar/meetings/{meeting_id}', response_model=CalendarMeetingContext, tags=['calendar'])

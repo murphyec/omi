@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 
 import database.fair_use as fair_use_db
 from database._client import db
-from utils.other.endpoints import get_current_user_uid, rate_limit_dependency
+from utils.other.endpoints import rate_limit_dependency
 from utils.fair_use import (
     get_rolling_speech_ms,
     get_dg_budget_status,
@@ -171,8 +171,9 @@ def get_public_case_status(case_ref: str):
 
 
 @router.get('/v1/fair-use/status', tags=['fair_use'])
-def get_my_fair_use_status(uid: str = Depends(get_current_user_uid)):
+def get_my_fair_use_status(request: Request):
     """User-facing endpoint: see your own fair-use status and speech usage."""
+    uid = request.state.uid
     state = fair_use_db.get_fair_use_state(uid)
     speech = get_rolling_speech_ms(uid)
 

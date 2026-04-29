@@ -28,15 +28,15 @@ class CreateFocusSessionRequest(BaseModel):
 
 
 @router.post('/v1/focus-sessions', tags=['focus-sessions'])
-def create_focus_session(request: CreateFocusSessionRequest):
+def create_focus_session(request: Request, data: CreateFocusSessionRequest):
     uid = request.state.uid
     return focus_sessions_db.create_focus_session(
         uid,
-        status=request.status,
-        app_or_site=request.app_or_site,
-        description=request.description,
-        message=request.message,
-        duration_seconds=request.duration_seconds,
+        status=data.status,
+        app_or_site=data.app_or_site,
+        description=data.description,
+        message=data.message,
+        duration_seconds=data.duration_seconds,
     )
 
 

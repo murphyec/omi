@@ -35,17 +35,17 @@ class UpdateAdviceRequest(BaseModel):
 
 
 @router.post('/v1/advice', tags=['advice'])
-def create_advice(request: CreateAdviceRequest):
+def create_advice(request: Request, data: CreateAdviceRequest):
     uid = request.state.uid
     return advice_db.create_advice(
         uid,
-        content=request.content,
-        category=request.category or 'other',
-        reasoning=request.reasoning,
-        source_app=request.source_app,
-        confidence=request.confidence,
-        context_summary=request.context_summary,
-        current_activity=request.current_activity,
+        content=data.content,
+        category=data.category or 'other',
+        reasoning=data.reasoning,
+        source_app=data.source_app,
+        confidence=data.confidence,
+        context_summary=data.context_summary,
+        current_activity=data.current_activity,
     )
 
 
@@ -62,9 +62,9 @@ def get_advice(
 
 
 @router.patch('/v1/advice/{advice_id}', tags=['advice'])
-def update_advice(advice_id: str, request: UpdateAdviceRequest):
+def update_advice(request: Request, advice_id: str, data: UpdateAdviceRequest):
     uid = request.state.uid
-    result = advice_db.update_advice(uid, advice_id, is_read=request.is_read, is_dismissed=request.is_dismissed)
+    result = advice_db.update_advice(uid, advice_id, is_read=data.is_read, is_dismissed=data.is_dismissed)
     if result is None:
         raise HTTPException(status_code=404, detail='Advice not found')
     return result

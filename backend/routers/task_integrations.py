@@ -103,8 +103,7 @@ def render_oauth_response(
     return templates.TemplateResponse('oauth_callback.html', context)
 
 
-def validate_and_consume_oauth_state(request: Request, state_token: Optional[str]) -> Optional[Dict[str, str]]:
-    uid = request.state.uid
+def validate_and_consume_oauth_state(state_token: Optional[str]) -> Optional[Dict[str, str]]:
     """
     Validate OAuth state token and return associated data.
     Deletes the state token after validation to prevent replay attacks.
@@ -205,11 +204,11 @@ def get_default_task_integration(request: Request):
 
 
 @router.put("/v1/task-integrations/default", response_model=DefaultTaskIntegrationResponse, tags=['task-integrations'])
-def set_default_task_integration(request: DefaultTaskIntegrationRequest):
+def set_default_task_integration(request: Request, data: DefaultTaskIntegrationRequest):
     uid = request.state.uid
     """Set the user's default task integration app."""
-    users_db.set_default_task_integration(uid, request.app_key)
-    return DefaultTaskIntegrationResponse(default_app=request.app_key)
+    users_db.set_default_task_integration(uid, data.app_key)
+    return DefaultTaskIntegrationResponse(default_app=data.app_key)
 
 
 @router.put("/v1/task-integrations/{app_key}", tags=['task-integrations'])
@@ -674,8 +673,9 @@ class CreateTaskResponse(BaseModel):
 
 
 @router.post("/v1/task-integrations/{app_key}/tasks", response_model=CreateTaskResponse, tags=['task-integrations'])
-async def create_task_via_integration(app_key: str, request: CreateTaskRequest):
+async def create_task_via_integration(request: Request, app_key: str, data: CreateTaskRequest):
     """Create a task in the specified integration using stored credentials."""
+    uid = request.state.uid
 
     # Get integration details
     integration = users_db.get_task_integration(uid, app_key)
@@ -688,15 +688,15 @@ async def create_task_via_integration(app_key: str, request: CreateTaskRequest):
 
     # Parse due date if provided
     due_date = None
-    if request.due_date:
-        due_date = datetime.fromisoformat(request.due_date.replace('Z', '+00:00'))
+    if data.due_date:
+        due_date = datetime.fromisoformat(data.due_date.replace('Z', '+00:00'))
 
     result = await _create_task_internal(
         uid=uid,
         app_key=app_key,
         integration=integration,
-        title=request.title,
-        description=request.description,
+        title=data.title,
+        description=data.description,
         due_date=due_date,
     )
 

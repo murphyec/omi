@@ -72,9 +72,9 @@ class GenerateTitleRequest(BaseModel):
 
 
 @router.post('/v2/chat-sessions', tags=['chat-sessions'])
-def create_chat_session(request: CreateChatSessionRequest):
+def create_chat_session(request: Request, data: CreateChatSessionRequest):
     uid = request.state.uid
-    return chat_db.create_chat_session(uid, title=request.title, app_id=request.app_id)
+    return chat_db.create_chat_session(uid, title=data.title, app_id=data.app_id)
 
 
 @router.get('/v2/chat-sessions', tags=['chat-sessions'])
@@ -99,9 +99,9 @@ def get_chat_session(request: Request, session_id: str):
 
 
 @router.patch('/v2/chat-sessions/{session_id}', tags=['chat-sessions'])
-def update_chat_session(session_id: str, request: UpdateChatSessionRequest):
+def update_chat_session(request: Request, session_id: str, data: UpdateChatSessionRequest):
     uid = request.state.uid
-    result = chat_db.update_chat_session(uid, session_id, title=request.title, starred=request.starred)
+    result = chat_db.update_chat_session(uid, session_id, title=data.title, starred=data.starred)
     if result is None:
         raise HTTPException(status_code=404, detail='Chat session not found')
     return result
@@ -122,15 +122,15 @@ def delete_chat_session(request: Request, session_id: str):
 
 
 @router.post('/v2/desktop/messages', tags=['chat-sessions'])
-def save_message(request: SaveMessageRequest):
+def save_message(request: Request, data: SaveMessageRequest):
     uid = request.state.uid
     return chat_db.save_message(
         uid,
-        text=request.text,
-        sender=request.sender,
-        app_id=request.app_id,
-        session_id=request.session_id,
-        metadata=request.metadata,
+        text=data.text,
+        sender=data.sender,
+        app_id=data.app_id,
+        session_id=data.session_id,
+        metadata=data.metadata,
     )
 
 
@@ -154,16 +154,16 @@ def delete_messages(request: Request, app_id: str | None = Query(None), session_
 
 
 @router.patch('/v2/desktop/messages/{message_id}/rating', tags=['chat-sessions'])
-def rate_message(message_id: str, request: RateMessageRequest):
+def rate_message(request: Request, message_id: str, data: RateMessageRequest):
     uid = request.state.uid
-    if request.rating is not None and request.rating not in (1, -1):
+    if data.rating is not None and data.rating not in (1, -1):
         raise HTTPException(status_code=400, detail='Rating must be 1, -1, or null')
-    if not chat_db.update_message_rating(uid, message_id, request.rating):
+    if not chat_db.update_message_rating(uid, message_id, data.rating):
         raise HTTPException(status_code=404, detail='Message not found')
     # Also write to analytics collection (same as mobile endpoint) so ratings
     # appear in the admin dashboard chat ratings chart.
-    value = request.rating if request.rating is not None else 0
-    set_chat_message_rating_score(uid, message_id, value, platform='desktop', app_version=request.app_version)
+    value = data.rating if data.rating is not None else 0
+    set_chat_message_rating_score(uid, message_id, value, platform='desktop', app_version=data.app_version)
     return {'status': 'ok'}
 
 
@@ -175,7 +175,7 @@ def rate_message(message_id: str, request: RateMessageRequest):
 @router.post(
     '/v2/chat/initial-message', tags=['chat-sessions'], dependencies=[Depends(auth.with_rate_limit("chat:initial"))]
 )
-def create_initial_message(request: InitialMessageRequest):
+def create_initial_message(request: Request, data: InitialMessageRequest):
     uid = request.state.uid
     """Generate an initial greeting message for a chat session.
 
@@ -184,19 +184,19 @@ def create_initial_message(request: InitialMessageRequest):
     """
     from routers.chat import initial_message_util
 
-    ai_message = initial_message_util(uid, request.app_id, chat_session_id=request.session_id)
+    ai_message = initial_message_util(uid, data.app_id, chat_session_id=data.session_id)
     return {'message': ai_message.text, 'message_id': ai_message.id}
 
 
 @router.post(
     '/v2/chat/generate-title', tags=['chat-sessions'], dependencies=[Depends(auth.with_rate_limit("chat:initial"))]
 )
-def generate_session_title(request: GenerateTitleRequest):
+def generate_session_title(request: Request, data: GenerateTitleRequest):
     uid = request.state.uid
     """Generate a title for a chat session based on its messages."""
     from utils.llm.clients import get_llm
 
-    conversation = '\n'.join(f"{m.sender}: {m.text}" for m in request.messages[:10])
+    conversation = '\n'.join(f"{m.sender}: {m.text}" for m in data.messages[:10])
     prompt = (
         "Generate a short, descriptive title (max 6 words) for this chat conversation. "
         "Return ONLY the title text, no quotes or punctuation.\n\n"
