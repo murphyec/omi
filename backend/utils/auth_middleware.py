@@ -49,15 +49,21 @@ class AuthMode(str, Enum):
 class RouteRule:
     """Match a request to an auth mode by method + path prefix."""
 
-    __slots__ = ('methods', 'path', 'mode', '_is_prefix')
+    __slots__ = ('methods', 'path', 'mode', '_is_prefix', '_has_middle_wild')
 
     def __init__(self, methods: FrozenSet[str], path: str, mode: AuthMode):
         self.methods = methods
         self.mode = mode
+        self._has_middle_wild = False
         # Paths ending with * are prefix matches (e.g. "/v1/dev/*")
         if path.endswith('/*'):
             self._is_prefix = True
             self.path = path[:-1]  # keep trailing /
+        elif '*' in path:
+            # Middle wildcard (e.g. "/v1/conversations/*/shared")
+            self._is_prefix = False
+            self._has_middle_wild = True
+            self.path = path
         else:
             self._is_prefix = False
             self.path = path
@@ -67,8 +73,11 @@ class RouteRule:
             return False
         if self._is_prefix:
             return path.startswith(self.path)
-        # Exact match, but also match paths with trailing path params
-        # e.g. rule "/v1/health" matches "/v1/health" exactly
+        if self._has_middle_wild:
+            # Simple glob: split on * and check prefix/suffix
+            parts = self.path.split('*')
+            return path.startswith(parts[0]) and path.endswith(parts[1]) and len(path) > len(parts[0]) + len(parts[1])
+        # Exact match
         return path == self.path
 
 
@@ -131,8 +140,14 @@ AUTH_RULES: List[RouteRule] = [
     RouteRule(frozenset({"POST"}), "/token", AuthMode.CUSTOM),
     # Admin secret key
     RouteRule(_ALL, "/v1/admin/*", AuthMode.CUSTOM),
+    # Announcements: user routes need Firebase, admin routes use secret-key header.
+    # First-match-wins, so list Firebase user routes BEFORE admin wildcards.
+    RouteRule(frozenset({"GET"}), "/v1/announcements/pending", AuthMode.FIREBASE),
+    # POST /{id}/dismiss has extra segment — won't match PUT/DELETE /{id} wildcard
+    # Admin CRUD (secret-key auth in handler)
     RouteRule(frozenset({"GET"}), "/v1/announcements/all", AuthMode.CUSTOM),
-    RouteRule(frozenset({"GET", "POST", "PUT", "DELETE"}), "/v1/announcements/*", AuthMode.CUSTOM),
+    RouteRule(frozenset({"POST"}), "/v1/announcements", AuthMode.CUSTOM),
+    RouteRule(frozenset({"GET", "PUT", "DELETE"}), "/v1/announcements/*", AuthMode.CUSTOM),
     # Metrics (secret key)
     RouteRule(frozenset({"GET"}), "/metrics", AuthMode.CUSTOM),
     # Webhooks (signature validation)
@@ -146,9 +161,8 @@ AUTH_RULES: List[RouteRule] = [
     # Notification webhooks
     RouteRule(frozenset({"POST"}), "/v1/notification", AuthMode.CUSTOM),
     RouteRule(frozenset({"POST"}), "/v1/integrations/notification", AuthMode.CUSTOM),
-    # Agent tools (VM auth)
+    # Agent tools (VM auth — /v1/agent-tools/ only, NOT /v1/tools/ which uses Firebase)
     RouteRule(_ALL, "/v1/agent-tools/*", AuthMode.CUSTOM),
-    RouteRule(_ALL, "/v1/tools/*", AuthMode.CUSTOM),
     # Phone call webhooks
     RouteRule(frozenset({"POST"}), "/v1/phone-calls/webhook", AuthMode.CUSTOM),
     RouteRule(frozenset({"POST"}), "/v1/phone-calls/webhook/*", AuthMode.CUSTOM),
