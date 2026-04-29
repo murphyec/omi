@@ -308,8 +308,9 @@ def with_rate_limit(policy_or_auth_dep, policy_name: str = None):
 
         async def dependency(request: Request):
             uid = getattr(request.state, 'uid', None)
-            if uid:
-                _enforce_rate_limit(uid, actual_policy)
+            if not uid:
+                raise HTTPException(status_code=401, detail="Authentication required")
+            _enforce_rate_limit(uid, actual_policy)
 
         return dependency
     else:
