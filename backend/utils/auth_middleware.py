@@ -252,7 +252,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.byok_keys = validated_keys
 
         # Install into ContextVar so get_byok_keys()/has_byok_keys() work
-        byok_token = _byok_ctx.set(validated_keys if validated_keys else byok_keys_raw if byok_keys_raw else None)
+        # For FIREBASE mode: only install validated keys (never raw/unvalidated)
+        # For FIREBASE_SKIP_BYOK: install raw keys (validation intentionally skipped)
+        if mode == AuthMode.FIREBASE:
+            ctx_keys = validated_keys if validated_keys else None
+        else:
+            ctx_keys = byok_keys_raw if byok_keys_raw else None
+        byok_token = _byok_ctx.set(ctx_keys)
         try:
             return await call_next(request)
         finally:
