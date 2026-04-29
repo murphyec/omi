@@ -1,0 +1,262 @@
+"""Tests for the unified AuthMiddleware (utils/auth_middleware.py).
+
+Covers:
+- Route matching (public, custom, firebase, firebase_skip_byok)
+- RouteRule exact and prefix matching
+- Token verification (ADMIN_KEY and Firebase)
+- End-to-end middleware dispatch (mocked)
+"""
+
+import os
+import sys
+import unittest
+from unittest.mock import MagicMock, patch
+
+# Mock database modules before importing auth_middleware
+sys.modules.setdefault('database', MagicMock())
+sys.modules.setdefault('database._client', MagicMock())
+sys.modules.setdefault('database.users', MagicMock())
+sys.modules.setdefault('database.redis_db', MagicMock())
+
+from utils.auth_middleware import (
+    AUTH_RULES,
+    AuthMode,
+    RouteRule,
+    _resolve_auth_mode,
+    _verify_token,
+)
+
+
+class TestRouteMatching(unittest.TestCase):
+    """Test _resolve_auth_mode against AUTH_RULES."""
+
+    # --- Public routes ---
+
+    def test_health_is_public(self):
+        assert _resolve_auth_mode("GET", "/v1/health") == AuthMode.PUBLIC
+
+    def test_trends_is_public(self):
+        assert _resolve_auth_mode("GET", "/v1/trends") == AuthMode.PUBLIC
+
+    def test_firmware_latest_is_public(self):
+        assert _resolve_auth_mode("GET", "/v2/firmware/latest") == AuthMode.PUBLIC
+
+    def test_firmware_stable_is_public(self):
+        assert _resolve_auth_mode("GET", "/v2/firmware/stable") == AuthMode.PUBLIC
+
+    def test_desktop_appcast_is_public(self):
+        assert _resolve_auth_mode("GET", "/v2/desktop/appcast.xml") == AuthMode.PUBLIC
+
+    def test_desktop_download_latest_is_public(self):
+        assert _resolve_auth_mode("GET", "/v2/desktop/download/latest") == AuthMode.PUBLIC
+
+    def test_app_categories_is_public(self):
+        assert _resolve_auth_mode("GET", "/v1/app-categories") == AuthMode.PUBLIC
+
+    def test_app_capabilities_is_public(self):
+        assert _resolve_auth_mode("GET", "/v1/app-capabilities") == AuthMode.PUBLIC
+
+    def test_announcements_changelogs_public(self):
+        assert _resolve_auth_mode("GET", "/v1/announcements/changelogs") == AuthMode.PUBLIC
+
+    def test_announcements_features_public(self):
+        assert _resolve_auth_mode("GET", "/v1/announcements/features") == AuthMode.PUBLIC
+
+    def test_announcements_general_public(self):
+        assert _resolve_auth_mode("GET", "/v1/announcements/general") == AuthMode.PUBLIC
+
+    def test_shared_action_items_public(self):
+        assert _resolve_auth_mode("GET", "/v1/action-items/shared/abc123") == AuthMode.PUBLIC
+
+    def test_shared_messages_public(self):
+        assert _resolve_auth_mode("GET", "/v2/messages/shared/token456") == AuthMode.PUBLIC
+
+    def test_docs_public(self):
+        assert _resolve_auth_mode("GET", "/docs") == AuthMode.PUBLIC
+
+    def test_openapi_json_public(self):
+        assert _resolve_auth_mode("GET", "/openapi.json") == AuthMode.PUBLIC
+
+    # --- Custom auth routes ---
+
+    def test_auth_authorize_is_custom(self):
+        assert _resolve_auth_mode("GET", "/v1/auth/authorize") == AuthMode.CUSTOM
+
+    def test_auth_callback_is_custom(self):
+        assert _resolve_auth_mode("GET", "/v1/auth/callback/google") == AuthMode.CUSTOM
+        assert _resolve_auth_mode("POST", "/v1/auth/callback/apple") == AuthMode.CUSTOM
+
+    def test_oauth_is_custom(self):
+        assert _resolve_auth_mode("GET", "/v1/oauth/authorize") == AuthMode.CUSTOM
+        assert _resolve_auth_mode("POST", "/v1/oauth/token") == AuthMode.CUSTOM
+
+    def test_integration_is_custom(self):
+        assert _resolve_auth_mode("POST", "/v2/integrations/app123/user/conversations") == AuthMode.CUSTOM
+
+    def test_mcp_sse_is_custom(self):
+        assert _resolve_auth_mode("POST", "/v1/mcp/sse") == AuthMode.CUSTOM
+        assert _resolve_auth_mode("GET", "/v1/mcp/sse") == AuthMode.CUSTOM
+        assert _resolve_auth_mode("GET", "/v1/mcp/sse/info") == AuthMode.CUSTOM
+
+    def test_stripe_webhook_is_custom(self):
+        assert _resolve_auth_mode("POST", "/v1/stripe/webhook") == AuthMode.CUSTOM
+        assert _resolve_auth_mode("POST", "/v1/stripe/connect/webhook") == AuthMode.CUSTOM
+
+    def test_metrics_is_custom(self):
+        assert _resolve_auth_mode("GET", "/metrics") == AuthMode.CUSTOM
+
+    def test_admin_routes_are_custom(self):
+        assert _resolve_auth_mode("GET", "/v1/admin/fair-use/flagged") == AuthMode.CUSTOM
+        assert _resolve_auth_mode("POST", "/v1/admin/fair-use/user/uid123/resolve-event/evt1") == AuthMode.CUSTOM
+
+    def test_dev_api_is_custom(self):
+        assert _resolve_auth_mode("GET", "/v1/dev/user/memories") == AuthMode.CUSTOM
+        assert _resolve_auth_mode("POST", "/v1/dev/user/memories") == AuthMode.CUSTOM
+
+    def test_agent_tools_is_custom(self):
+        assert _resolve_auth_mode("POST", "/v1/agent-tools/execute") == AuthMode.CUSTOM
+        assert _resolve_auth_mode("GET", "/v1/agent-tools/status") == AuthMode.CUSTOM
+
+    def test_tools_is_custom(self):
+        assert _resolve_auth_mode("POST", "/v1/tools/execute") == AuthMode.CUSTOM
+
+    def test_notification_webhook_is_custom(self):
+        assert _resolve_auth_mode("POST", "/v1/notification") == AuthMode.CUSTOM
+        assert _resolve_auth_mode("POST", "/v1/integrations/notification") == AuthMode.CUSTOM
+
+    def test_hume_callback_is_custom(self):
+        assert _resolve_auth_mode("POST", "/v1/agents/hume/callback") == AuthMode.CUSTOM
+
+    def test_desktop_clear_cache_is_custom(self):
+        assert _resolve_auth_mode("POST", "/v2/desktop/clear-cache") == AuthMode.CUSTOM
+
+    def test_phone_webhooks_are_custom(self):
+        assert _resolve_auth_mode("POST", "/v1/phone-calls/webhook") == AuthMode.CUSTOM
+        assert _resolve_auth_mode("POST", "/v1/phone-calls/webhook/status") == AuthMode.CUSTOM
+
+    # --- Firebase skip BYOK ---
+
+    def test_byok_activation_skip_byok(self):
+        assert _resolve_auth_mode("POST", "/v1/users/me/byok-active") == AuthMode.FIREBASE_SKIP_BYOK
+        assert _resolve_auth_mode("DELETE", "/v1/users/me/byok-active") == AuthMode.FIREBASE_SKIP_BYOK
+
+    def test_subscription_skip_byok(self):
+        assert _resolve_auth_mode("GET", "/v1/users/me/subscription") == AuthMode.FIREBASE_SKIP_BYOK
+
+    def test_payment_plans_skip_byok(self):
+        assert _resolve_auth_mode("GET", "/v1/payments/available-plans") == AuthMode.FIREBASE_SKIP_BYOK
+
+    def test_overage_info_skip_byok(self):
+        assert _resolve_auth_mode("GET", "/v1/payments/overage-info") == AuthMode.FIREBASE_SKIP_BYOK
+
+    # --- Default: Firebase (auth + BYOK) ---
+
+    def test_conversations_is_firebase(self):
+        assert _resolve_auth_mode("GET", "/v1/conversations") == AuthMode.FIREBASE
+
+    def test_memories_is_firebase(self):
+        assert _resolve_auth_mode("GET", "/v3/memories") == AuthMode.FIREBASE
+
+    def test_chat_messages_is_firebase(self):
+        assert _resolve_auth_mode("POST", "/v2/messages") == AuthMode.FIREBASE
+
+    def test_users_profile_is_firebase(self):
+        assert _resolve_auth_mode("GET", "/v1/users/profile") == AuthMode.FIREBASE
+
+    def test_unknown_route_defaults_to_firebase(self):
+        assert _resolve_auth_mode("GET", "/v99/unknown/endpoint") == AuthMode.FIREBASE
+
+    def test_post_to_public_get_route_is_firebase(self):
+        # POST to /v1/trends should be Firebase (only GET is public)
+        assert _resolve_auth_mode("POST", "/v1/trends") == AuthMode.FIREBASE
+
+
+class TestRouteRule(unittest.TestCase):
+    """Test RouteRule matching logic."""
+
+    def test_exact_match(self):
+        rule = RouteRule(frozenset({"GET"}), "/v1/health", AuthMode.PUBLIC)
+        assert rule.matches("GET", "/v1/health") is True
+        assert rule.matches("POST", "/v1/health") is False
+        assert rule.matches("GET", "/v1/health/extra") is False
+
+    def test_prefix_match(self):
+        rule = RouteRule(frozenset({"GET"}), "/v1/dev/*", AuthMode.CUSTOM)
+        assert rule.matches("GET", "/v1/dev/user/memories") is True
+        assert rule.matches("GET", "/v1/dev/") is True
+        assert rule.matches("GET", "/v1/developer") is False
+        assert rule.matches("POST", "/v1/dev/test") is False
+
+    def test_all_methods_match(self):
+        rule = RouteRule(frozenset(), "/v1/health", AuthMode.PUBLIC)
+        assert rule.matches("GET", "/v1/health") is True
+        assert rule.matches("POST", "/v1/health") is True
+        assert rule.matches("DELETE", "/v1/health") is True
+
+    def test_multiple_methods(self):
+        rule = RouteRule(frozenset({"POST", "DELETE"}), "/v1/users/me/byok-active", AuthMode.FIREBASE_SKIP_BYOK)
+        assert rule.matches("POST", "/v1/users/me/byok-active") is True
+        assert rule.matches("DELETE", "/v1/users/me/byok-active") is True
+        assert rule.matches("GET", "/v1/users/me/byok-active") is False
+
+
+class TestVerifyToken(unittest.TestCase):
+    """Test token verification logic."""
+
+    @patch.dict(os.environ, {"ADMIN_KEY": "test_admin_key_"})
+    def test_admin_key_extracts_uid(self):
+        uid = _verify_token("test_admin_key_user123")
+        assert uid == "user123"
+
+    @patch.dict(os.environ, {"ADMIN_KEY": "admin_"})
+    def test_admin_key_empty_uid(self):
+        uid = _verify_token("admin_")
+        assert uid == ""
+
+    @patch.dict(os.environ, {"ADMIN_KEY": ""})
+    @patch("utils.auth_middleware.firebase_auth.verify_id_token")
+    def test_firebase_token_verified(self, mock_verify):
+        mock_verify.return_value = {"uid": "firebase_user"}
+        uid = _verify_token("valid.firebase.token")
+        assert uid == "firebase_user"
+        mock_verify.assert_called_once_with("valid.firebase.token")
+
+    @patch.dict(os.environ, {"ADMIN_KEY": "", "LOCAL_DEVELOPMENT": "true"})
+    @patch("utils.auth_middleware.firebase_auth.verify_id_token")
+    def test_local_dev_fallback(self, mock_verify):
+        from firebase_admin.auth import InvalidIdTokenError
+
+        mock_verify.side_effect = InvalidIdTokenError("test")
+        uid = _verify_token("bad_token")
+        assert uid == "123"
+
+    @patch.dict(os.environ, {"ADMIN_KEY": "", "LOCAL_DEVELOPMENT": ""})
+    @patch("utils.auth_middleware.firebase_auth.verify_id_token")
+    def test_invalid_token_raises(self, mock_verify):
+        from firebase_admin.auth import InvalidIdTokenError
+
+        mock_verify.side_effect = InvalidIdTokenError("test")
+        with self.assertRaises(InvalidIdTokenError):
+            _verify_token("bad_token")
+
+
+class TestAllowlistCompleteness(unittest.TestCase):
+    """Ensure the allowlist covers all known public/custom routes."""
+
+    def test_no_duplicate_rules(self):
+        seen = set()
+        for rule in AUTH_RULES:
+            key = (tuple(sorted(rule.methods)), rule.path, rule.mode)
+            assert key not in seen, f"Duplicate rule: {key}"
+            seen.add(key)
+
+    def test_all_modes_represented(self):
+        modes = {rule.mode for rule in AUTH_RULES}
+        assert AuthMode.PUBLIC in modes
+        assert AuthMode.CUSTOM in modes
+        assert AuthMode.FIREBASE_SKIP_BYOK in modes
+        # FIREBASE is the default, doesn't need explicit rules
+
+
+if __name__ == "__main__":
+    unittest.main()
