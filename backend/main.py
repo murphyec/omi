@@ -143,9 +143,9 @@ methods_timeout = {
 
 app.add_middleware(TimeoutMiddleware, methods_timeout=methods_timeout)
 
-from utils.byok import BYOKMiddleware
+from utils.auth_middleware import AuthMiddleware
 
-app.add_middleware(BYOKMiddleware)
+app.add_middleware(AuthMiddleware)
 
 
 @app.on_event("shutdown")
