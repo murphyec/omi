@@ -1043,21 +1043,20 @@ class TestBYOKSeparatedDeps:
         ws.headers = headers
         return ws
 
-    @patch('utils.other.endpoints.validate_and_return_byok_keys', return_value={'openai': 'sk-o'})
-    def test_http_dep_extracts_and_validates(self, mock_validate):
-        from utils.other.endpoints import get_validated_byok_keys_http
+    def test_http_middleware_extracts_byok_headers(self):
+        """AuthMiddleware extracts BYOK headers from HTTP requests."""
+        from utils.auth_middleware import _extract_byok_headers
 
-        req = self._make_request({'x-byok-openai': 'sk-o'})
-        result = get_validated_byok_keys_http(request=req, uid='uid-1')
-        assert result == {'openai': 'sk-o'}
-        mock_validate.assert_called_once()
+        req = self._make_request({'x-byok-openai': 'sk-o', 'x-byok-deepgram': 'dg-d'})
+        result = _extract_byok_headers(req)
+        assert result == {'openai': 'sk-o', 'deepgram': 'dg-d'}
 
-    @patch('utils.other.endpoints.validate_and_return_byok_keys', return_value={})
-    def test_http_dep_returns_empty_for_no_headers(self, mock_validate):
-        from utils.other.endpoints import get_validated_byok_keys_http
+    def test_http_middleware_empty_headers(self):
+        """AuthMiddleware returns empty dict when no BYOK headers present."""
+        from utils.auth_middleware import _extract_byok_headers
 
         req = self._make_request({})
-        result = get_validated_byok_keys_http(request=req, uid='uid-2')
+        result = _extract_byok_headers(req)
         assert result == {}
 
     @patch('utils.other.endpoints.validate_and_return_byok_keys_ws', return_value={'deepgram': 'dg-d'})
