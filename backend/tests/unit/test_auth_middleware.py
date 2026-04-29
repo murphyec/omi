@@ -117,8 +117,10 @@ class TestRouteMatching(unittest.TestCase):
         assert _resolve_auth_mode("POST", "/v1/agent-tools/execute") == AuthMode.CUSTOM
         assert _resolve_auth_mode("GET", "/v1/agent-tools/status") == AuthMode.CUSTOM
 
-    def test_tools_is_custom(self):
-        assert _resolve_auth_mode("POST", "/v1/tools/execute") == AuthMode.CUSTOM
+    def test_tools_is_firebase(self):
+        # /v1/tools/* uses Firebase auth (not custom)
+        assert _resolve_auth_mode("GET", "/v1/tools/conversations") == AuthMode.FIREBASE
+        assert _resolve_auth_mode("POST", "/v1/tools/conversations/search") == AuthMode.FIREBASE
 
     def test_notification_webhook_is_custom(self):
         assert _resolve_auth_mode("POST", "/v1/notification") == AuthMode.CUSTOM
@@ -170,6 +172,28 @@ class TestRouteMatching(unittest.TestCase):
         # POST to /v1/trends should be Firebase (only GET is public)
         assert _resolve_auth_mode("POST", "/v1/trends") == AuthMode.FIREBASE
 
+    def test_shared_conversation_is_public(self):
+        # Middle wildcard: /v1/conversations/*/shared
+        assert _resolve_auth_mode("GET", "/v1/conversations/abc123/shared") == AuthMode.PUBLIC
+
+    def test_announcements_pending_is_firebase(self):
+        # User route: needs Firebase auth, not CUSTOM
+        assert _resolve_auth_mode("GET", "/v1/announcements/pending") == AuthMode.FIREBASE
+
+    def test_announcements_dismiss_is_firebase(self):
+        # POST /v1/announcements/{id}/dismiss — user route, needs Firebase
+        assert _resolve_auth_mode("POST", "/v1/announcements/abc123/dismiss") == AuthMode.FIREBASE
+
+    def test_announcements_admin_crud_is_custom(self):
+        # Admin routes use secret-key header
+        assert _resolve_auth_mode("GET", "/v1/announcements/all") == AuthMode.CUSTOM
+        assert _resolve_auth_mode("POST", "/v1/announcements") == AuthMode.CUSTOM
+        assert _resolve_auth_mode("PUT", "/v1/announcements/abc123") == AuthMode.CUSTOM
+        assert _resolve_auth_mode("DELETE", "/v1/announcements/abc123") == AuthMode.CUSTOM
+
+    def test_announcements_admin_get_by_id_is_custom(self):
+        assert _resolve_auth_mode("GET", "/v1/announcements/abc123") == AuthMode.CUSTOM
+
 
 class TestRouteRule(unittest.TestCase):
     """Test RouteRule matching logic."""
@@ -198,6 +222,13 @@ class TestRouteRule(unittest.TestCase):
         assert rule.matches("POST", "/v1/users/me/byok-active") is True
         assert rule.matches("DELETE", "/v1/users/me/byok-active") is True
         assert rule.matches("GET", "/v1/users/me/byok-active") is False
+
+    def test_middle_wildcard_match(self):
+        rule = RouteRule(frozenset({"GET"}), "/v1/conversations/*/shared", AuthMode.PUBLIC)
+        assert rule.matches("GET", "/v1/conversations/abc123/shared") is True
+        assert rule.matches("GET", "/v1/conversations//shared") is False  # empty segment
+        assert rule.matches("GET", "/v1/conversations/shared") is False  # no middle segment
+        assert rule.matches("POST", "/v1/conversations/abc123/shared") is False  # wrong method
 
 
 class TestVerifyToken(unittest.TestCase):
