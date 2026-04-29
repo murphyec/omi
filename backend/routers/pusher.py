@@ -158,14 +158,12 @@ async def _websocket_util_trigger(websocket: WebSocket, uid: str, sample_rate: i
     # Track background tasks to cancel on cleanup (prevents memory leaks from fire-and-forget tasks)
     bg_tasks: Set[asyncio.Task] = set()
 
-    def spawn(request: Request, coro) -> asyncio.Task:
-        uid = request.state.uid
+    def spawn(coro) -> asyncio.Task:
         """Create a tracked background task that will be cancelled on cleanup."""
         task = asyncio.create_task(coro)
         bg_tasks.add(task)
 
-        def on_done(request: Request, t):
-            uid = request.state.uid
+        def on_done(t):
             bg_tasks.discard(t)
             if t.cancelled():
                 return
@@ -187,8 +185,7 @@ async def _websocket_util_trigger(websocket: WebSocket, uid: str, sample_rate: i
     private_cloud_queue: deque = deque(maxlen=PRIVATE_CLOUD_QUEUE_MAX_SIZE)
     audio_bytes_event = asyncio.Event()  # Signals when items are added for instant wake
 
-    async def process_private_cloud_queue(request: Request):
-        uid = request.state.uid
+    async def process_private_cloud_queue():
         """Background task that batches private cloud sync uploads by conversation_id.
 
         Chunks are accumulated per conversation and flushed when:
@@ -214,8 +211,7 @@ async def _websocket_util_trigger(websocket: WebSocket, uid: str, sample_rate: i
             batch = pending[conv_id]
             batch['data'].extend(chunk_info['data'])
 
-        async def _flush_batch(request: Request, conv_id: str):
-            uid = request.state.uid
+        async def _flush_batch(conv_id: str):
             """Upload a batched chunk and update audio files."""
             batch = pending.pop(conv_id, None)
             if not batch or len(batch['data']) == 0:
@@ -330,8 +326,7 @@ async def _websocket_util_trigger(websocket: WebSocket, uid: str, sample_rate: i
                 except Exception as e:
                     logger.error(f"Error extracting speaker samples: {e} {uid} {conv_id}")
 
-    async def process_transcript_queue(request: Request):
-        uid = request.state.uid
+    async def process_transcript_queue():
         """Batched consumer for transcript events (realtime integrations + webhooks)."""
         nonlocal websocket_active
 
@@ -354,8 +349,7 @@ async def _websocket_util_trigger(websocket: WebSocket, uid: str, sample_rate: i
                 except Exception as e:
                     logger.error(f"Error processing transcript batch: {e} {uid}")
 
-    async def process_audio_bytes_queue(request: Request):
-        uid = request.state.uid
+    async def process_audio_bytes_queue():
         """Event-driven consumer for audio bytes triggers (app integrations + webhooks)."""
         nonlocal websocket_active
 
@@ -384,8 +378,7 @@ async def _websocket_util_trigger(websocket: WebSocket, uid: str, sample_rate: i
                 except Exception as e:
                     logger.error(f"Error processing audio bytes: {e} {uid}")
 
-    async def receive_tasks(request: Request):
-        uid = request.state.uid
+    async def receive_tasks():
         nonlocal websocket_active
         nonlocal websocket_close_code
         nonlocal speaker_sample_queue

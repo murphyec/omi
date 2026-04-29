@@ -188,8 +188,7 @@ def precache_conversation_audio_endpoint(request: Request, conversation_id: str)
         return {"status": "no_audio", "message": "No audio files in conversation"}
 
     # Start background parallel pre-caching for all audio files using storage_executor
-    def _precache_all_parallel(request: Request):
-        uid = request.state.uid
+    def _precache_all_parallel():
         logger.info(f"Pre-caching all {len(audio_files)} audio files for conversation {conversation_id} (parallel)")
         futures = [
             submit_with_context(storage_executor, _precache_audio_file, uid, conversation_id, af) for af in audio_files
@@ -1471,8 +1470,7 @@ def _run_full_pipeline_background(
         segment_errors = []
         segment_lock = threading.Lock()
 
-        def _process_one_segment(request: Request, path):
-            uid = request.state.uid
+        def _process_one_segment(path):
             process_segment(
                 path,
                 uid,

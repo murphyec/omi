@@ -264,8 +264,7 @@ def send_message(
 
     messages = list(reversed([Message(**msg) for msg in chat_db.get_messages(uid, limit=10, app_id=compat_app_id)]))
 
-    def process_message(request: Request, response: str, callback_data: dict):
-        uid = request.state.uid
+    def process_message(response: str, callback_data: dict):
         memories = callback_data.get('memories_found', [])
         ask_for_nps = callback_data.get('ask_for_nps', False)
         langsmith_run_id = callback_data.get('langsmith_run_id')
@@ -305,8 +304,7 @@ def send_message(
 
         return ai_message, ask_for_nps
 
-    async def generate_stream(request: Request):
-        uid = request.state.uid
+    async def generate_stream():
         callback_data = {}
         # Set usage context for streaming (can't use 'with' across yields)
         usage_token = set_usage_context(uid, Features.CHAT)
@@ -503,8 +501,7 @@ async def create_voice_message_stream(
     resolved_language = resolve_voice_message_language(uid, language)
 
     # process
-    async def generate_stream(request: Request):
-        uid = request.state.uid
+    async def generate_stream():
         async for chunk in process_voice_message_segment_stream(first_wav, uid, language=resolved_language):
             yield chunk
 
@@ -799,8 +796,7 @@ async def transcribe_voice_message_stream(
     def stream_transcript(segments):
         loop.call_soon_threadsafe(segment_queue.put_nowait, segments)
 
-    async def segment_sender(request: Request):
-        uid = request.state.uid
+    async def segment_sender():
         """Forward segments from the thread-safe queue to the WebSocket."""
         nonlocal websocket_active
         while websocket_active:

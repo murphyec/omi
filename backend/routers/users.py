@@ -1393,8 +1393,7 @@ async def export_all_user_data(request: Request):
     uid = request.state.uid
     """Export all user data for GDPR/CCPA compliance. Streams response to avoid timeouts."""
 
-    def generate(request: Request):
-        uid = request.state.uid
+    def generate():
         profile = get_user_profile(uid)
         memories_list = memories_db.get_memories(uid, limit=10000, offset=0)
         people = get_people(uid)
