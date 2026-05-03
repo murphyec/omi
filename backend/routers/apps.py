@@ -340,6 +340,7 @@ def get_capability_apps_grouped_by_category(capability_id: str, include_reviews:
 
 @router.get('/v2/apps/search', tags=['v2'])
 def search_apps(
+    request: Request,
     q: str | None = Query(default=None, description='Search query for app name or description'),
     category: str | None = Query(default=None, description='Filter by category id'),
     rating: float | None = Query(default=None, ge=0, le=5, description='Minimum rating filter'),
@@ -356,6 +357,7 @@ def search_apps(
 
     Returns a flat list of apps matching the search and filter criteria.
     """
+    uid = request.state.uid
 
     enabled_app_ids = None
     if installed_apps:
