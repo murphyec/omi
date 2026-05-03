@@ -194,6 +194,23 @@ class TestRouteMatching(unittest.TestCase):
     def test_announcements_admin_get_by_id_is_custom(self):
         assert _resolve_auth_mode("GET", "/v1/announcements/abc123") == AuthMode.CUSTOM
 
+    # --- Payment browser redirects (public, no auth) ---
+
+    def test_stripe_supported_countries_is_public(self):
+        assert _resolve_auth_mode("GET", "/v1/stripe/supported-countries") == AuthMode.PUBLIC
+
+    def test_stripe_return_is_public(self):
+        assert _resolve_auth_mode("GET", "/v1/stripe/return/acct_123abc") == AuthMode.PUBLIC
+
+    def test_payments_success_is_public(self):
+        assert _resolve_auth_mode("GET", "/v1/payments/success") == AuthMode.PUBLIC
+
+    def test_payments_cancel_is_public(self):
+        assert _resolve_auth_mode("GET", "/v1/payments/cancel") == AuthMode.PUBLIC
+
+    def test_payments_portal_return_is_public(self):
+        assert _resolve_auth_mode("GET", "/v1/payments/portal-return") == AuthMode.PUBLIC
+
 
 class TestRouteRule(unittest.TestCase):
     """Test RouteRule matching logic."""
