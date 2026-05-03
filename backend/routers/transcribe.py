@@ -2834,6 +2834,8 @@ async def listen_handler(
     vad_gate: str = '',
     call_id: Optional[str] = None,
 ):
+    if byok_keys:
+        set_byok_keys(byok_keys)
     custom_stt_mode = CustomSttMode.enabled if custom_stt == 'enabled' else CustomSttMode.disabled
     onboarding_mode = onboarding == 'enabled'
     speaker_auto_assign_enabled = speaker_auto_assign == 'enabled'
