@@ -127,6 +127,12 @@ AUTH_RULES: List[RouteRule] = [
     RouteRule(frozenset({"GET"}), "/docs", AuthMode.PUBLIC),
     RouteRule(frozenset({"GET"}), "/openapi.json", AuthMode.PUBLIC),
     RouteRule(frozenset({"GET"}), "/redoc", AuthMode.PUBLIC),
+    # Payment browser redirects / HTML pages (no auth)
+    RouteRule(frozenset({"GET"}), "/v1/stripe/supported-countries", AuthMode.PUBLIC),
+    RouteRule(frozenset({"GET"}), "/v1/stripe/return/*", AuthMode.PUBLIC),
+    RouteRule(frozenset({"GET"}), "/v1/payments/success", AuthMode.PUBLIC),
+    RouteRule(frozenset({"GET"}), "/v1/payments/cancel", AuthMode.PUBLIC),
+    RouteRule(frozenset({"GET"}), "/v1/payments/portal-return", AuthMode.PUBLIC),
     # --- Custom auth (own auth logic, not Firebase) ---
     # OAuth / auth flow
     RouteRule(_ALL, "/v1/auth/*", AuthMode.CUSTOM),
