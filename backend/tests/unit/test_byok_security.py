@@ -454,6 +454,13 @@ class TestBoundedCache:
 # ---------------------------------------------------------------------------
 
 
+def _mock_request(uid: str):
+    """Create a mock Request with state.uid set."""
+    req = MagicMock()
+    req.state.uid = uid
+    return req
+
+
 class TestBYOKActivationValidation:
     """Test the actual activate_byok_endpoint and its production constants."""
 
@@ -471,7 +478,7 @@ class TestBYOKActivationValidation:
 
         fps = self._valid_fingerprints()
         data = BYOKActivateRequest(fingerprints=fps)
-        result = activate_byok_endpoint(data, uid='test-uid')
+        result = activate_byok_endpoint(_mock_request('test-uid'), data)
         assert result == {"active": True}
         mock_users_db.set_byok_active.assert_called_once_with('test-uid', fps)
 
@@ -483,7 +490,7 @@ class TestBYOKActivationValidation:
         del fps['deepgram']
         data = BYOKActivateRequest(fingerprints=fps)
         with pytest.raises(HTTPException) as exc_info:
-            activate_byok_endpoint(data, uid='test-uid')
+            activate_byok_endpoint(_mock_request('test-uid'), data)
         assert exc_info.value.status_code == 400
         assert 'deepgram' in str(exc_info.value.detail)
 
@@ -495,7 +502,7 @@ class TestBYOKActivationValidation:
         fps['unknown_provider'] = hashlib.sha256(b'x').hexdigest()
         data = BYOKActivateRequest(fingerprints=fps)
         with pytest.raises(HTTPException) as exc_info:
-            activate_byok_endpoint(data, uid='test-uid')
+            activate_byok_endpoint(_mock_request('test-uid'), data)
         assert exc_info.value.status_code == 400
         assert 'Unknown provider' in str(exc_info.value.detail)
 
@@ -507,7 +514,7 @@ class TestBYOKActivationValidation:
         fps['openai'] = 'a' * 63
         data = BYOKActivateRequest(fingerprints=fps)
         with pytest.raises(HTTPException) as exc_info:
-            activate_byok_endpoint(data, uid='test-uid')
+            activate_byok_endpoint(_mock_request('test-uid'), data)
         assert exc_info.value.status_code == 400
 
     @patch('routers.users.users_db')
@@ -517,7 +524,7 @@ class TestBYOKActivationValidation:
         fps = self._valid_fingerprints()
         fps['openai'] = 'a' * 64
         data = BYOKActivateRequest(fingerprints=fps)
-        result = activate_byok_endpoint(data, uid='test-uid')
+        result = activate_byok_endpoint(_mock_request('test-uid'), data)
         assert result == {"active": True}
 
     def test_65_char_fingerprint_rejects(self):
@@ -528,7 +535,7 @@ class TestBYOKActivationValidation:
         fps['openai'] = 'a' * 65
         data = BYOKActivateRequest(fingerprints=fps)
         with pytest.raises(HTTPException) as exc_info:
-            activate_byok_endpoint(data, uid='test-uid')
+            activate_byok_endpoint(_mock_request('test-uid'), data)
         assert exc_info.value.status_code == 400
 
     def test_empty_fingerprints_rejects(self):
@@ -537,14 +544,14 @@ class TestBYOKActivationValidation:
 
         data = BYOKActivateRequest(fingerprints={})
         with pytest.raises(HTTPException) as exc_info:
-            activate_byok_endpoint(data, uid='test-uid')
+            activate_byok_endpoint(_mock_request('test-uid'), data)
         assert exc_info.value.status_code == 400
 
     @patch('routers.users.users_db')
     def test_deactivation_calls_clear(self, mock_users_db):
         from routers.users import deactivate_byok_endpoint
 
-        result = deactivate_byok_endpoint(uid='test-uid')
+        result = deactivate_byok_endpoint(_mock_request('test-uid'))
         assert result == {"active": False}
         mock_users_db.clear_byok_active.assert_called_once_with('test-uid')
 
@@ -1084,7 +1091,7 @@ class TestActivationCacheInvalidation:
             'deepgram': hashlib.sha256(b'sk-d').hexdigest(),
         }
         data = BYOKActivateRequest(fingerprints=fingerprints)
-        result = activate_byok_endpoint(data=data, uid='uid-act')
+        result = activate_byok_endpoint(_mock_request('uid-act'), data)
         assert result == {'active': True}
         mock_invalidate.assert_called_once_with('uid-act')
 
@@ -1093,7 +1100,7 @@ class TestActivationCacheInvalidation:
     def test_deactivate_invalidates_cache(self, mock_users_db, mock_invalidate):
         from routers.users import deactivate_byok_endpoint
 
-        result = deactivate_byok_endpoint(uid='uid-deact')
+        result = deactivate_byok_endpoint(_mock_request('uid-deact'))
         assert result == {'active': False}
         mock_invalidate.assert_called_once_with('uid-deact')
 
