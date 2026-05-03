@@ -546,15 +546,20 @@ class SafeModulateSocket:
         with self._lock:
             if self._dead or self._closed:
                 return
-        if not self._header_sent and self._wav_header:
-            data = self._wav_header + data
-            self._header_sent = True
+            if not self._header_sent and self._wav_header:
+                data = self._wav_header + data
+                self._header_sent = True
+
+        def _enqueue():
+            try:
+                self._send_queue.put_nowait(data)
+            except asyncio.QueueFull:
+                self._mark_dead('send queue full')
+
         try:
-            self._loop.call_soon_threadsafe(self._send_queue.put_nowait, data)
-        except asyncio.QueueFull:
-            self._mark_dead('send queue full')
-        except Exception as e:
-            self._mark_dead(f'send enqueue error: {e}')
+            self._loop.call_soon_threadsafe(_enqueue)
+        except RuntimeError:
+            self._mark_dead('event loop closed')
 
     def finalize(self) -> None:
         pass
@@ -565,8 +570,8 @@ class SafeModulateSocket:
                 return
             self._closed = True
         try:
-            self._loop.call_soon_threadsafe(self._send_queue.put_nowait, b'')
-        except Exception:
+            self._loop.call_soon_threadsafe(lambda: self._send_queue.put_nowait(b''))
+        except (RuntimeError, Exception):
             pass
 
     async def drain_and_close(self):
