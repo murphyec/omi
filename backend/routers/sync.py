@@ -320,12 +320,12 @@ def download_audio_file_endpoint(
         audio_file_id: ID of the audio file within the conversation
         request: FastAPI Request object (for Range header)
         format: Output format - 'wav' or 'pcm' (raw) (default: wav)
-        uid: User ID (from authentication)
 
     Returns:
         StreamingResponse with the audio file in the requested format.
         Returns 206 Partial Content for Range requests, 200 OK for full file.
     """
+    uid = request.state.uid
     # Verify user owns the conversation
     conversation = conversations_db.get_conversation(uid, conversation_id)
     if not conversation:
