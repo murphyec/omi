@@ -244,6 +244,26 @@ class TestRouteMatching(unittest.TestCase):
     def test_unapproved_apps_is_custom(self):
         assert _resolve_auth_mode("GET", "/v1/apps/public/unapproved") == AuthMode.CUSTOM
 
+    # Personas: twitter routes use Firebase, admin get-by-id uses CUSTOM
+    def test_personas_twitter_profile_is_firebase(self):
+        assert _resolve_auth_mode("GET", "/v1/personas/twitter/profile") == AuthMode.FIREBASE
+
+    def test_personas_twitter_verify_ownership_is_firebase(self):
+        assert _resolve_auth_mode("GET", "/v1/personas/twitter/verify-ownership") == AuthMode.FIREBASE
+
+    def test_personas_twitter_initial_message_is_firebase(self):
+        assert _resolve_auth_mode("GET", "/v1/personas/twitter/initial-message") == AuthMode.FIREBASE
+
+    def test_personas_admin_get_by_id_is_custom(self):
+        assert _resolve_auth_mode("GET", "/v1/personas/some-persona-id") == AuthMode.CUSTOM
+
+    # summary-app-ids: exact match and wildcard
+    def test_summary_app_ids_exact_is_custom(self):
+        assert _resolve_auth_mode("GET", "/v1/summary-app-ids") == AuthMode.CUSTOM
+
+    def test_summary_app_ids_with_segment_is_custom(self):
+        assert _resolve_auth_mode("POST", "/v1/summary-app-ids/abc123") == AuthMode.CUSTOM
+
 
 class TestRouteRule(unittest.TestCase):
     """Test RouteRule matching logic."""
