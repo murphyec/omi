@@ -211,6 +211,39 @@ class TestRouteMatching(unittest.TestCase):
     def test_payments_portal_return_is_public(self):
         assert _resolve_auth_mode("GET", "/v1/payments/portal-return") == AuthMode.PUBLIC
 
+    # Public app catalog endpoints
+    def test_v2_apps_catalog_is_public(self):
+        assert _resolve_auth_mode("GET", "/v2/apps") == AuthMode.PUBLIC
+
+    def test_v2_apps_capability_grouped_is_public(self):
+        assert _resolve_auth_mode("GET", "/v2/apps/capability/abc123/grouped") == AuthMode.PUBLIC
+
+    def test_approved_apps_is_public(self):
+        assert _resolve_auth_mode("GET", "/v1/approved-apps") == AuthMode.PUBLIC
+
+    def test_popular_apps_is_public(self):
+        assert _resolve_auth_mode("GET", "/v1/apps/popular") == AuthMode.PUBLIC
+
+    def test_app_reviews_is_public(self):
+        assert _resolve_auth_mode("GET", "/v1/apps/some-app-id/reviews") == AuthMode.PUBLIC
+
+    def test_app_payment_plans_is_public(self):
+        assert _resolve_auth_mode("GET", "/v1/app/payment-plans") == AuthMode.PUBLIC
+
+    # Stripe Connect refresh is custom
+    def test_stripe_refresh_is_custom(self):
+        assert _resolve_auth_mode("POST", "/v1/stripe/refresh/acct_123") == AuthMode.CUSTOM
+
+    # Admin app management is custom
+    def test_app_approve_is_custom(self):
+        assert _resolve_auth_mode("POST", "/v1/apps/some-id/approve") == AuthMode.CUSTOM
+
+    def test_app_reject_is_custom(self):
+        assert _resolve_auth_mode("POST", "/v1/apps/some-id/reject") == AuthMode.CUSTOM
+
+    def test_unapproved_apps_is_custom(self):
+        assert _resolve_auth_mode("GET", "/v1/apps/public/unapproved") == AuthMode.CUSTOM
+
 
 class TestRouteRule(unittest.TestCase):
     """Test RouteRule matching logic."""
