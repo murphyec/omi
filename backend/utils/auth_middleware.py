@@ -133,6 +133,14 @@ AUTH_RULES: List[RouteRule] = [
     RouteRule(frozenset({"GET"}), "/v1/payments/success", AuthMode.PUBLIC),
     RouteRule(frozenset({"GET"}), "/v1/payments/cancel", AuthMode.PUBLIC),
     RouteRule(frozenset({"GET"}), "/v1/payments/portal-return", AuthMode.PUBLIC),
+    # Public app catalog endpoints (no auth — used by app store browsing)
+    RouteRule(frozenset({"GET"}), "/v2/apps", AuthMode.PUBLIC),
+    RouteRule(frozenset({"GET"}), "/v2/apps/capability/*/grouped", AuthMode.PUBLIC),
+    RouteRule(frozenset({"GET"}), "/v1/approved-apps", AuthMode.PUBLIC),
+    RouteRule(frozenset({"GET"}), "/v1/apps/popular", AuthMode.PUBLIC),
+    RouteRule(frozenset({"GET"}), "/v1/apps/*/reviews", AuthMode.PUBLIC),
+    RouteRule(frozenset({"GET"}), "/v1/app/payment-plans", AuthMode.PUBLIC),
+    RouteRule(frozenset({"GET"}), "/v1/app/plans", AuthMode.PUBLIC),
     # --- Custom auth (own auth logic, not Firebase) ---
     # OAuth / auth flow
     RouteRule(_ALL, "/v1/auth/*", AuthMode.CUSTOM),
@@ -156,6 +164,8 @@ AUTH_RULES: List[RouteRule] = [
     RouteRule(frozenset({"GET", "PUT", "DELETE"}), "/v1/announcements/*", AuthMode.CUSTOM),
     # Metrics (secret key)
     RouteRule(frozenset({"GET"}), "/metrics", AuthMode.CUSTOM),
+    # Stripe Connect (own auth via account_id, no Firebase)
+    RouteRule(frozenset({"POST"}), "/v1/stripe/refresh/*", AuthMode.CUSTOM),
     # Webhooks (signature validation)
     RouteRule(frozenset({"POST"}), "/v1/stripe/webhook", AuthMode.CUSTOM),
     RouteRule(frozenset({"POST"}), "/v1/stripe/connect/webhook", AuthMode.CUSTOM),
@@ -172,6 +182,14 @@ AUTH_RULES: List[RouteRule] = [
     # Phone call webhooks
     RouteRule(frozenset({"POST"}), "/v1/phone-calls/webhook", AuthMode.CUSTOM),
     RouteRule(frozenset({"POST"}), "/v1/phone-calls/webhook/*", AuthMode.CUSTOM),
+    # Admin app management (secret key auth in handler)
+    RouteRule(frozenset({"POST"}), "/v1/apps/*/approve", AuthMode.CUSTOM),
+    RouteRule(frozenset({"POST"}), "/v1/apps/*/reject", AuthMode.CUSTOM),
+    RouteRule(frozenset({"PATCH"}), "/v1/apps/*/popular", AuthMode.CUSTOM),
+    RouteRule(frozenset({"GET"}), "/v1/apps/public/unapproved", AuthMode.CUSTOM),
+    RouteRule(frozenset({"GET"}), "/v1/personas/*", AuthMode.CUSTOM),
+    RouteRule(_ALL, "/v1/summary-app-ids/*", AuthMode.CUSTOM),
+    RouteRule(frozenset({"POST"}), "/v1/apps/migrate-owner", AuthMode.CUSTOM),
     # --- Firebase auth, skip BYOK validation ---
     # BYOK activation/deactivation endpoints (would deadlock on fingerprint check)
     RouteRule(frozenset({"POST", "DELETE"}), "/v1/users/me/byok-active", AuthMode.FIREBASE_SKIP_BYOK),
