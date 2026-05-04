@@ -187,7 +187,10 @@ AUTH_RULES: List[RouteRule] = [
     RouteRule(frozenset({"POST"}), "/v1/apps/*/reject", AuthMode.CUSTOM),
     RouteRule(frozenset({"PATCH"}), "/v1/apps/*/popular", AuthMode.CUSTOM),
     RouteRule(frozenset({"GET"}), "/v1/apps/public/unapproved", AuthMode.CUSTOM),
+    # Personas: twitter routes need Firebase (user context), admin get-by-id uses secret key
+    RouteRule(frozenset({"GET"}), "/v1/personas/twitter/*", AuthMode.FIREBASE),
     RouteRule(frozenset({"GET"}), "/v1/personas/*", AuthMode.CUSTOM),
+    RouteRule(frozenset({"GET"}), "/v1/summary-app-ids", AuthMode.CUSTOM),
     RouteRule(_ALL, "/v1/summary-app-ids/*", AuthMode.CUSTOM),
     RouteRule(frozenset({"POST"}), "/v1/apps/migrate-owner", AuthMode.CUSTOM),
     # --- Firebase auth, skip BYOK validation ---
