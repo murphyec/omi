@@ -758,3 +758,7 @@ def make_stream_callback(callback, vad_gate, passthrough: bool):
 
         return wrapped
     return callback
+
+
+def sort_transcript_segments_in_place(segments: list) -> None:
+    segments.sort(key=lambda s: s.start)
