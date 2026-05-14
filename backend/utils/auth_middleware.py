@@ -127,6 +127,9 @@ AUTH_RULES: List[RouteRule] = [
     RouteRule(frozenset({"GET"}), "/docs", AuthMode.PUBLIC),
     RouteRule(frozenset({"GET"}), "/openapi.json", AuthMode.PUBLIC),
     RouteRule(frozenset({"GET"}), "/redoc", AuthMode.PUBLIC),
+    RouteRule(frozenset({"GET"}), "/docs/oauth2-redirect", AuthMode.PUBLIC),
+    # Fair-use case status (public unauthenticated lookup)
+    RouteRule(frozenset({"GET"}), "/v1/fair-use/case/*/status", AuthMode.PUBLIC),
     # Payment browser redirects / HTML pages (no auth)
     RouteRule(frozenset({"GET"}), "/v1/stripe/supported-countries", AuthMode.PUBLIC),
     RouteRule(frozenset({"GET"}), "/v1/stripe/return/*", AuthMode.PUBLIC),
@@ -182,6 +185,8 @@ AUTH_RULES: List[RouteRule] = [
     # Phone call webhooks
     RouteRule(frozenset({"POST"}), "/v1/phone-calls/webhook", AuthMode.CUSTOM),
     RouteRule(frozenset({"POST"}), "/v1/phone-calls/webhook/*", AuthMode.CUSTOM),
+    # Twilio TwiML webhook (signature validation, not Firebase)
+    RouteRule(frozenset({"POST"}), "/v1/phone/twiml", AuthMode.CUSTOM),
     # Admin app management (secret key auth in handler)
     RouteRule(frozenset({"POST"}), "/v1/apps/*/approve", AuthMode.CUSTOM),
     RouteRule(frozenset({"POST"}), "/v1/apps/*/reject", AuthMode.CUSTOM),
@@ -192,7 +197,7 @@ AUTH_RULES: List[RouteRule] = [
     RouteRule(frozenset({"GET"}), "/v1/personas/*", AuthMode.CUSTOM),
     RouteRule(frozenset({"GET"}), "/v1/summary-app-ids", AuthMode.CUSTOM),
     RouteRule(_ALL, "/v1/summary-app-ids/*", AuthMode.CUSTOM),
-    RouteRule(frozenset({"POST"}), "/v1/apps/migrate-owner", AuthMode.CUSTOM),
+    RouteRule(frozenset({"POST"}), "/v1/apps/migrate-owner", AuthMode.FIREBASE),
     # --- Firebase auth, skip BYOK validation ---
     # BYOK activation/deactivation endpoints (would deadlock on fingerprint check)
     RouteRule(frozenset({"POST", "DELETE"}), "/v1/users/me/byok-active", AuthMode.FIREBASE_SKIP_BYOK),
