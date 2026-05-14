@@ -234,7 +234,6 @@ async def _stream_handler(
     This function is called by both _listen (for app clients) and web_listen_handler (for web clients).
     """
     session_id = str(uuid.uuid4())
-    BACKEND_LISTEN_ACTIVE_WS_CONNECTIONS.inc()
     logger.info(
         f'_stream_handler {uid} {session_id} {language} {sample_rate} {codec} {include_speech_profile} {stt_service} {conversation_timeout} custom_stt={custom_stt_mode} onboarding={onboarding_mode}'
     )
@@ -2600,6 +2599,7 @@ async def _stream_handler(
     #
     bg_main_tasks = []
     try:
+        BACKEND_LISTEN_ACTIVE_WS_CONNECTIONS.inc()
         # Init STT
         _send_message_event(MessageServiceStatusEvent(status="stt_initiating", status_text="STT Service Starting"))
         await _process_stt()
