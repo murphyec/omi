@@ -69,11 +69,13 @@ from utils.voice_duration_limiter import (
     check_budget,
     record_actual_duration,
 )
+from utils.auth_middleware import require_firebase
 import logging
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+_public_router = APIRouter()
+_firebase_router = APIRouter(dependencies=[Depends(require_firebase)])
 
 # WS idle timeout: close if no audio bytes received for this long
 _WS_IDLE_TIMEOUT_S = 60
@@ -174,7 +176,7 @@ def _build_quota_exceeded_reply(
     return ResponseMessage(**ai_msg.dict(), ask_for_nps=False)
 
 
-@router.post(
+@_firebase_router.post(
     '/v2/messages',
     tags=['chat'],
     response_model=ResponseMessage,
@@ -338,7 +340,7 @@ def send_message(
     return StreamingResponse(generate_stream(), media_type="text/event-stream")
 
 
-@router.post('/v2/messages/{message_id}/report', tags=['chat'], response_model=dict)
+@_firebase_router.post('/v2/messages/{message_id}/report', tags=['chat'], response_model=dict)
 def report_message(request: Request, message_id: str):
     uid = request.state.uid
     message, msg_doc_id = chat_db.get_message(uid, message_id)
@@ -352,7 +354,7 @@ def report_message(request: Request, message_id: str):
     return {'message': 'Message reported'}
 
 
-@router.delete('/v2/messages', tags=['chat'], response_model=Message)
+@_firebase_router.delete('/v2/messages', tags=['chat'], response_model=Message)
 def clear_chat_messages(request: Request, app_id: Optional[str] = None, plugin_id: Optional[str] = None):
     uid = request.state.uid
     compat_app_id = app_id or plugin_id
@@ -432,7 +434,7 @@ def initial_message_util(uid: str, app_id: Optional[str] = None, chat_session_id
     return ai_message
 
 
-@router.post(
+@_firebase_router.post(
     '/v2/initial-message',
     tags=['chat'],
     response_model=Message,
@@ -444,7 +446,7 @@ def create_initial_message(request: Request, app_id: Optional[str] = None, plugi
     return initial_message_util(uid, compat_app_id)
 
 
-@router.get('/v2/messages', response_model=List[Message], tags=['chat'])
+@_firebase_router.get('/v2/messages', response_model=List[Message], tags=['chat'])
 def get_messages(request: Request, plugin_id: Optional[str] = None, app_id: Optional[str] = None):
     uid = request.state.uid
     compat_app_id = app_id or plugin_id
@@ -471,7 +473,7 @@ def get_messages(request: Request, plugin_id: Optional[str] = None, app_id: Opti
     return messages
 
 
-@router.post("/v2/voice-messages", dependencies=[Depends(auth.with_rate_limit("voice:message"))])
+@_firebase_router.post("/v2/voice-messages", dependencies=[Depends(auth.with_rate_limit("voice:message"))])
 async def create_voice_message_stream(
     request: Request,
     files: List[UploadFile] = File(...),
@@ -508,7 +510,7 @@ async def create_voice_message_stream(
     return StreamingResponse(generate_stream(), media_type="text/event-stream")
 
 
-@router.post("/v2/voice-message/transcribe", dependencies=[Depends(auth.with_rate_limit("voice:transcribe"))])
+@_firebase_router.post("/v2/voice-message/transcribe", dependencies=[Depends(auth.with_rate_limit("voice:transcribe"))])
 async def transcribe_voice_message(
     request: Request,
     x_app_platform: Optional[str] = Header(None, alias='X-App-Platform'),
@@ -697,7 +699,7 @@ async def transcribe_voice_message(
     return response
 
 
-@router.websocket("/v2/voice-message/transcribe-stream")
+@_public_router.websocket("/v2/voice-message/transcribe-stream")
 async def transcribe_voice_message_stream(
     websocket: WebSocket,
     uid: str = Depends(auth.get_current_user_uid_ws_listen),
@@ -956,7 +958,7 @@ async def transcribe_voice_message_stream(
         del stt_audio_buffer
 
 
-@router.post(
+@_firebase_router.post(
     '/v2/files',
     response_model=List[FileChat],
     tags=['chat'],
@@ -1015,7 +1017,7 @@ def upload_file_chat(request: Request, files: List[UploadFile] = File(...)):
 # CLEANUP: Remove after new app goes to prod ----------------------------------------------------------
 
 
-@router.post(
+@_firebase_router.post(
     '/v1/files',
     response_model=List[FileChat],
     tags=['chat'],
@@ -1070,7 +1072,7 @@ def upload_file_chat(request: Request, files: List[UploadFile] = File(...)):
     return response
 
 
-@router.post('/v1/messages/{message_id}/report', tags=['chat'], response_model=dict)
+@_firebase_router.post('/v1/messages/{message_id}/report', tags=['chat'], response_model=dict)
 def report_message(request: Request, message_id: str):
     uid = request.state.uid
     message, msg_doc_id = chat_db.get_message(uid, message_id)
@@ -1084,7 +1086,7 @@ def report_message(request: Request, message_id: str):
     return {'message': 'Message reported'}
 
 
-@router.delete('/v1/messages', tags=['chat'], response_model=Message)
+@_firebase_router.delete('/v1/messages', tags=['chat'], response_model=Message)
 def clear_chat_messages(request: Request, plugin_id: Optional[str] = None, app_id: Optional[str] = None):
     uid = request.state.uid
     compat_app_id = app_id or plugin_id
@@ -1115,7 +1117,7 @@ def clear_chat_messages(request: Request, plugin_id: Optional[str] = None, app_i
     return initial_message_util(uid, compat_app_id)
 
 
-@router.post(
+@_firebase_router.post(
     '/v1/initial-message',
     tags=['chat'],
     response_model=Message,
@@ -1130,7 +1132,7 @@ def create_initial_message(request: Request, plugin_id: Optional[str] = None, ap
 # MARK: - Message Rating
 
 
-@router.patch('/v2/messages/{message_id}/rating', tags=['chat'])
+@_firebase_router.patch('/v2/messages/{message_id}/rating', tags=['chat'])
 def rate_message(request: Request, message_id: str, data: dict):
     uid = request.state.uid
     """Rate a chat message (thumbs up/down). Used by desktop client."""
@@ -1164,7 +1166,7 @@ def rate_message(request: Request, message_id: str, data: dict):
 # MARK: - Chat Sharing
 
 
-@router.post('/v2/messages/share', tags=['chat'])
+@_firebase_router.post('/v2/messages/share', tags=['chat'])
 def share_chat_messages(request: Request, data: dict):
     uid = request.state.uid
     """Create a shareable link for chat messages."""
@@ -1187,7 +1189,7 @@ def share_chat_messages(request: Request, data: dict):
     return {"url": f"https://h.omi.me/chat/{token}", "token": token}
 
 
-@router.get('/v2/messages/shared/{token}', tags=['chat'])
+@_public_router.get('/v2/messages/shared/{token}', tags=['chat'])
 def get_shared_chat_messages(request: Request, token: str):
     uid = request.state.uid
     """Public endpoint — get shared chat messages (no auth required)."""
@@ -1217,3 +1219,8 @@ def get_shared_chat_messages(request: Request, token: str):
         "messages": messages,
         "count": len(messages),
     }
+
+
+router = APIRouter()
+router.include_router(_public_router)
+router.include_router(_firebase_router)

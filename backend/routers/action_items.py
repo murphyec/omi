@@ -28,8 +28,10 @@ from utils.notifications import (
 )
 from utils.task_sync import auto_sync_action_item
 from pydantic import BaseModel, Field
+from utils.auth_middleware import require_firebase
 
-router = APIRouter()
+_public_router = APIRouter()
+_firebase_router = APIRouter(dependencies=[Depends(require_firebase)])
 
 
 # Request models specific to action items
@@ -98,7 +100,7 @@ class BatchUpdateActionItemsRequest(BaseModel):
     items: List[BatchUpdateActionItemEntry] = Field(..., max_length=500)
 
 
-@router.patch("/v1/action-items/batch", tags=['action-items'])
+@_firebase_router.patch("/v1/action-items/batch", tags=['action-items'])
 def batch_update_action_items(request: Request, data: BatchUpdateActionItemsRequest):
     uid = request.state.uid
     """Batch update sort_order and indent_level for multiple action items."""
@@ -125,7 +127,7 @@ class SyncBatchRequest(BaseModel):
     items: List[SyncBatchItem] = Field(..., max_length=100)
 
 
-@router.get("/v1/action-items/pending-sync", tags=['action-items'])
+@_firebase_router.get("/v1/action-items/pending-sync", tags=['action-items'])
 def get_pending_sync_items(request: Request, platform: str = Query('apple_reminders', description="Sync platform")):
     uid = request.state.uid
     """Get action items that need sync: pending export + already synced items for bidirectional sync."""
@@ -138,7 +140,7 @@ def get_pending_sync_items(request: Request, platform: str = Query('apple_remind
     }
 
 
-@router.patch("/v1/action-items/sync-batch", tags=['action-items'])
+@_firebase_router.patch("/v1/action-items/sync-batch", tags=['action-items'])
 def sync_batch_update(request: Request, data: SyncBatchRequest):
     uid = request.state.uid
     """Batch update action items during reminders sync. Single Firestore batch commit."""
@@ -192,7 +194,7 @@ def sync_batch_update(request: Request, data: SyncBatchRequest):
 # *****************************
 
 
-@router.post("/v1/action-items", response_model=ActionItemResponse, tags=['action-items'])
+@_firebase_router.post("/v1/action-items", response_model=ActionItemResponse, tags=['action-items'])
 def create_action_item(request: Request, data: CreateActionItemRequest):
     uid = request.state.uid
     """Create a new action item."""
@@ -228,7 +230,7 @@ def create_action_item(request: Request, data: CreateActionItemRequest):
     return ActionItemResponse(**action_item)
 
 
-@router.get("/v1/action-items", tags=['action-items'])
+@_firebase_router.get("/v1/action-items", tags=['action-items'])
 def get_action_items(
     request: Request,
     limit: int = Query(50, ge=1, le=500, description="Maximum number of action items to return"),
@@ -279,7 +281,7 @@ def get_action_items(
     return {"action_items": response_items, "has_more": has_more}
 
 
-@router.get("/v1/action-items/search", tags=['action-items'])
+@_firebase_router.get("/v1/action-items/search", tags=['action-items'])
 def search_action_items(
     request: Request,
     query: str = Query(..., min_length=1, description="Search query"),
@@ -296,7 +298,7 @@ def search_action_items(
     return {"action_items": [ActionItemResponse(**item) for item in action_items]}
 
 
-@router.get("/v1/action-items/{action_item_id}", response_model=ActionItemResponse, tags=['action-items'])
+@_firebase_router.get("/v1/action-items/{action_item_id}", response_model=ActionItemResponse, tags=['action-items'])
 def get_action_item(request: Request, action_item_id: str):
     uid = request.state.uid
     """Get a specific action item by ID."""
@@ -308,7 +310,7 @@ def get_action_item(request: Request, action_item_id: str):
     return ActionItemResponse(**action_item)
 
 
-@router.patch("/v1/action-items/{action_item_id}", response_model=ActionItemResponse, tags=['action-items'])
+@_firebase_router.patch("/v1/action-items/{action_item_id}", response_model=ActionItemResponse, tags=['action-items'])
 def update_action_item(request: Request, action_item_id: str, data: UpdateActionItemRequest):
     uid = request.state.uid
     """Update an action item."""
@@ -371,7 +373,9 @@ def update_action_item(request: Request, action_item_id: str, data: UpdateAction
     return ActionItemResponse(**updated_item)
 
 
-@router.patch("/v1/action-items/{action_item_id}/completed", response_model=ActionItemResponse, tags=['action-items'])
+@_firebase_router.patch(
+    "/v1/action-items/{action_item_id}/completed", response_model=ActionItemResponse, tags=['action-items']
+)
 def toggle_action_item_completion(
     request: Request, action_item_id: str, completed: bool = Query(description="Whether to mark as completed or not")
 ):
@@ -403,7 +407,7 @@ def toggle_action_item_completion(
     return ActionItemResponse(**updated_item)
 
 
-@router.delete("/v1/action-items/{action_item_id}", status_code=204, tags=['action-items'])
+@_firebase_router.delete("/v1/action-items/{action_item_id}", status_code=204, tags=['action-items'])
 def delete_action_item(request: Request, action_item_id: str):
     uid = request.state.uid
     """Delete an action item."""
@@ -424,7 +428,7 @@ class BatchDeleteActionItemsRequest(BaseModel):
     ids: List[str] = Field(description="IDs of action items to delete", min_length=1, max_length=500)
 
 
-@router.post("/v1/action-items/batch-delete", tags=['action-items'])
+@_firebase_router.post("/v1/action-items/batch-delete", tags=['action-items'])
 def batch_delete_action_items(request: BatchDeleteActionItemsRequest, uid: str = Depends(auth.get_current_user_uid)):
     """Delete multiple action items in one request.
 
@@ -446,7 +450,7 @@ def batch_delete_action_items(request: BatchDeleteActionItemsRequest, uid: str =
 # *****************************
 
 
-@router.get("/v1/conversations/{conversation_id}/action-items", tags=['action-items'])
+@_firebase_router.get("/v1/conversations/{conversation_id}/action-items", tags=['action-items'])
 def get_conversation_action_items(request: Request, conversation_id: str):
     uid = request.state.uid
     """Get all action items for a specific conversation."""
@@ -461,7 +465,7 @@ def get_conversation_action_items(request: Request, conversation_id: str):
     return {"action_items": response_items, "conversation_id": conversation_id}
 
 
-@router.delete("/v1/conversations/{conversation_id}/action-items", status_code=204, tags=['action-items'])
+@_firebase_router.delete("/v1/conversations/{conversation_id}/action-items", status_code=204, tags=['action-items'])
 def delete_conversation_action_items(request: Request, conversation_id: str):
     uid = request.state.uid
     """Delete all action items for a specific conversation."""
@@ -476,7 +480,7 @@ def delete_conversation_action_items(request: Request, conversation_id: str):
     return {"status": "Ok", "deleted_count": deleted_count}
 
 
-@router.post("/v1/action-items/batch", tags=['action-items'])
+@_firebase_router.post("/v1/action-items/batch", tags=['action-items'])
 def create_action_items_batch(request: Request, action_items: List[CreateActionItemRequest]):
     uid = request.state.uid
     """Create multiple action items in a batch."""
@@ -537,7 +541,7 @@ class AcceptSharedTasksRequest(BaseModel):
     token: str = Field(description="Share token from the shared URL")
 
 
-@router.post("/v1/action-items/share", tags=['action-items'])
+@_firebase_router.post("/v1/action-items/share", tags=['action-items'])
 def share_action_items(request: Request, data: ShareTasksRequest):
     uid = request.state.uid
     """Create a shareable link for selected action items."""
@@ -561,7 +565,7 @@ def share_action_items(request: Request, data: ShareTasksRequest):
     return {"url": f"https://h.omi.me/tasks/{token}", "token": token}
 
 
-@router.get("/v1/action-items/shared/{token}", tags=['action-items'])
+@_public_router.get("/v1/action-items/shared/{token}", tags=['action-items'])
 def get_shared_action_items(token: str):
     """Public endpoint — get shared task preview (no auth required)."""
     share_data = redis_db.get_task_share(token)
@@ -590,7 +594,7 @@ def get_shared_action_items(token: str):
     }
 
 
-@router.post("/v1/action-items/accept", tags=['action-items'])
+@_firebase_router.post("/v1/action-items/accept", tags=['action-items'])
 def accept_shared_action_items(request: Request, data: AcceptSharedTasksRequest):
     uid = request.state.uid
     """Save shared tasks to the recipient's task list."""
@@ -650,3 +654,8 @@ def accept_shared_action_items(request: Request, data: AcceptSharedTasksRequest)
         raise HTTPException(status_code=402, detail="Shared tasks are no longer available.")
 
     return {"created": created_ids, "count": len(created_ids)}
+
+
+router = APIRouter()
+router.include_router(_public_router)
+router.include_router(_firebase_router)

@@ -41,6 +41,7 @@ from utils.conversations.process_conversation import process_conversation, retri
 from utils.conversations.search import search_conversations
 from utils.llm.conversation_processing import generate_summary_with_prompt
 from utils.speaker_identification import extract_speaker_samples
+from utils.auth_middleware import require_firebase
 from utils.other import endpoints as auth
 from utils.other.storage import get_conversation_recording_if_exists
 from utils.app_integrations import trigger_external_integrations
@@ -49,7 +50,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+_public_router = APIRouter()
+_firebase_router = APIRouter(dependencies=[Depends(require_firebase)])
 
 
 def _get_valid_conversation_by_id(uid: str, conversation_id: str) -> dict:
@@ -67,7 +69,7 @@ class ProcessConversationRequest(BaseModel):
     calendar_meeting_context: Optional[CalendarMeetingContext] = None
 
 
-@router.post(
+@_firebase_router.post(
     "/v1/conversations",
     response_model=CreateConversationResponse,
     tags=['conversations'],
@@ -101,7 +103,7 @@ def process_in_progress_conversation(request: Request, data: ProcessConversation
     return CreateConversationResponse(conversation=conversation, messages=messages)
 
 
-@router.post(
+@_firebase_router.post(
     '/v1/conversations/{conversation_id}/reprocess',
     response_model=Conversation,
     tags=['conversations'],
@@ -130,7 +132,7 @@ def reprocess_conversation(
     return processed_conversation
 
 
-@router.get('/v1/conversations', response_model=List[Conversation], tags=['conversations'])
+@_firebase_router.get('/v1/conversations', response_model=List[Conversation], tags=['conversations'])
 def get_conversations(
     request: Request,
     limit: int = 100,
@@ -164,7 +166,7 @@ def get_conversations(
     return conversations
 
 
-@router.get('/v1/conversations/count', tags=['conversations'])
+@_firebase_router.get('/v1/conversations/count', tags=['conversations'])
 def get_conversations_count(
     request: Request,
     statuses: Optional[str] = Query(None, description="Comma-separated status filter (e.g. processing,completed)"),
@@ -176,14 +178,14 @@ def get_conversations_count(
     return {'count': count}
 
 
-@router.get("/v1/conversations/{conversation_id}", response_model=Conversation, tags=['conversations'])
+@_firebase_router.get("/v1/conversations/{conversation_id}", response_model=Conversation, tags=['conversations'])
 def get_conversation_by_id(request: Request, conversation_id: str):
     uid = request.state.uid
     logger.info(f'get_conversation_by_id {uid} {conversation_id}')
     return _get_valid_conversation_by_id(uid, conversation_id)
 
 
-@router.patch("/v1/conversations/{conversation_id}/title", tags=['conversations'])
+@_firebase_router.patch("/v1/conversations/{conversation_id}/title", tags=['conversations'])
 def patch_conversation_title(request: Request, conversation_id: str, title: str):
     uid = request.state.uid
     _get_valid_conversation_by_id(uid, conversation_id)
@@ -191,7 +193,7 @@ def patch_conversation_title(request: Request, conversation_id: str, title: str)
     return {'status': 'Ok'}
 
 
-@router.patch("/v1/conversations/{conversation_id}/summary", tags=['conversations'])
+@_firebase_router.patch("/v1/conversations/{conversation_id}/summary", tags=['conversations'])
 def patch_conversation_summary(
     conversation_id: str, data: UpdateSummaryRequest, uid: str = Depends(auth.get_current_user_uid)
 ):
@@ -203,7 +205,7 @@ def patch_conversation_summary(
     return {'status': 'Ok'}
 
 
-@router.patch("/v1/conversations/{conversation_id}/segments/text", tags=['conversations'])
+@_firebase_router.patch("/v1/conversations/{conversation_id}/segments/text", tags=['conversations'])
 def patch_conversation_segment_text(request: Request, conversation_id: str, data: UpdateSegmentTextRequest):
     uid = request.state.uid
     result = conversations_db.update_conversation_segment_text(uid, conversation_id, data.segment_id, data.text)
@@ -216,7 +218,7 @@ def patch_conversation_segment_text(request: Request, conversation_id: str, data
     return {'status': 'Ok'}
 
 
-@router.get(
+@_firebase_router.get(
     "/v1/conversations/{conversation_id}/photos", response_model=List[ConversationPhoto], tags=['conversations']
 )
 def get_conversation_photos(request: Request, conversation_id: str):
@@ -225,7 +227,7 @@ def get_conversation_photos(request: Request, conversation_id: str):
     return conversations_db.get_conversation_photos(uid, conversation_id)
 
 
-@router.get(
+@_firebase_router.get(
     "/v1/conversations/{conversation_id}/transcripts",
     response_model=dict[str, List[TranscriptSegment]],
     tags=['conversations'],
@@ -236,7 +238,7 @@ def get_conversation_transcripts_by_models(request: Request, conversation_id: st
     return conversations_db.get_conversation_transcripts_by_model(uid, conversation_id)
 
 
-@router.delete("/v1/conversations/{conversation_id}", status_code=204, tags=['conversations'])
+@_firebase_router.delete("/v1/conversations/{conversation_id}", status_code=204, tags=['conversations'])
 def delete_conversation(
     request: Request, conversation_id: str, background_tasks: BackgroundTasks, cascade: bool = Query(False)
 ):
@@ -261,14 +263,14 @@ def delete_conversation(
     return {"status": "Ok"}
 
 
-@router.get("/v1/conversations/{conversation_id}/recording", response_model=dict, tags=['conversations'])
+@_firebase_router.get("/v1/conversations/{conversation_id}/recording", response_model=dict, tags=['conversations'])
 def conversation_has_audio_recording(request: Request, conversation_id: str):
     uid = request.state.uid
     _get_valid_conversation_by_id(uid, conversation_id)
     return {'has_recording': get_conversation_recording_if_exists(uid, conversation_id) is not None}
 
 
-@router.patch("/v1/conversations/{conversation_id}/events", response_model=dict, tags=['conversations'])
+@_firebase_router.patch("/v1/conversations/{conversation_id}/events", response_model=dict, tags=['conversations'])
 def set_conversation_events_state(request: Request, conversation_id: str, data: SetConversationEventsStateRequest):
     uid = request.state.uid
     conversation = _get_valid_conversation_by_id(uid, conversation_id)
@@ -283,7 +285,7 @@ def set_conversation_events_state(request: Request, conversation_id: str, data: 
     return {"status": "Ok"}
 
 
-@router.patch("/v1/conversations/{conversation_id}/action-items", response_model=dict, tags=['conversations'])
+@_firebase_router.patch("/v1/conversations/{conversation_id}/action-items", response_model=dict, tags=['conversations'])
 def set_action_item_status(request: Request, data: SetConversationActionItemsStateRequest, conversation_id: str):
     uid = request.state.uid
     conversation = _get_valid_conversation_by_id(uid, conversation_id)
@@ -341,7 +343,7 @@ def set_action_item_status(request: Request, data: SetConversationActionItemsSta
     return {"status": "Ok"}
 
 
-@router.patch(
+@_firebase_router.patch(
     "/v1/conversations/{conversation_id}/action-items/{action_item_idx}", response_model=dict, tags=['conversations']
 )
 def update_action_item_description(request: Request, conversation_id: str, data: UpdateActionItemDescriptionRequest):
@@ -375,7 +377,9 @@ def update_action_item_description(request: Request, conversation_id: str, data:
     return {"status": "Ok"}
 
 
-@router.delete("/v1/conversations/{conversation_id}/action-items", response_model=dict, tags=['conversations'])
+@_firebase_router.delete(
+    "/v1/conversations/{conversation_id}/action-items", response_model=dict, tags=['conversations']
+)
 def delete_action_item(request: Request, data: DeleteActionItemRequest, conversation_id: str):
     uid = request.state.uid
     conversation = _get_valid_conversation_by_id(uid, conversation_id)
@@ -397,7 +401,7 @@ def delete_action_item(request: Request, data: DeleteActionItemRequest, conversa
     return {"status": "Ok"}
 
 
-@router.patch(
+@_firebase_router.patch(
     '/v1/conversations/{conversation_id}/segments/{segment_idx}/assign',
     response_model=Conversation,
     tags=['conversations'],
@@ -467,7 +471,7 @@ def set_assignee_conversation_segment(
     return conversation
 
 
-@router.patch(
+@_firebase_router.patch(
     '/v1/conversations/{conversation_id}/assign-speaker/{speaker_id}',
     response_model=Conversation,
     tags=['conversations'],
@@ -550,7 +554,7 @@ def set_assignee_conversation_segment(
     return conversation
 
 
-@router.patch(
+@_firebase_router.patch(
     '/v1/conversations/{conversation_id}/segments/assign-bulk', response_model=Conversation, tags=['conversations']
 )
 def assign_segments_bulk(
@@ -600,7 +604,7 @@ def assign_segments_bulk(
 # *********************************************
 
 
-@router.patch('/v1/conversations/{conversation_id}/visibility', tags=['conversations'])
+@_firebase_router.patch('/v1/conversations/{conversation_id}/visibility', tags=['conversations'])
 def set_conversation_visibility(request: Request, conversation_id: str, value: ConversationVisibility):
     uid = request.state.uid
     logger.info(f'update_conversation_visibility {conversation_id} {value} {uid}')
@@ -616,7 +620,7 @@ def set_conversation_visibility(request: Request, conversation_id: str, value: C
     return {"status": "Ok"}
 
 
-@router.patch('/v1/conversations/{conversation_id}/starred', tags=['conversations'])
+@_firebase_router.patch('/v1/conversations/{conversation_id}/starred', tags=['conversations'])
 def set_conversation_starred(request: Request, conversation_id: str, starred: bool):
     uid = request.state.uid
     logger.info(f'update_conversation_starred {conversation_id} {starred} {uid}')
@@ -625,7 +629,7 @@ def set_conversation_starred(request: Request, conversation_id: str, starred: bo
     return {"status": "Ok"}
 
 
-@router.get("/v1/conversations/{conversation_id}/shared", tags=['conversations'])
+@_public_router.get("/v1/conversations/{conversation_id}/shared", tags=['conversations'])
 def get_shared_conversation_by_id(conversation_id: str):
     uid = redis_db.get_conversation_uid(conversation_id)
     if not uid:
@@ -651,7 +655,7 @@ def get_shared_conversation_by_id(conversation_id: str):
     return response_dict
 
 
-@router.post(
+@_firebase_router.post(
     "/v1/conversations/search",
     response_model=dict,
     tags=['conversations'],
@@ -680,7 +684,7 @@ def search_conversations_endpoint(request: Request, search_request: SearchReques
     )
 
 
-@router.get("/v1/conversations/{conversation_id}/suggested-apps", response_model=dict, tags=['conversations'])
+@_firebase_router.get("/v1/conversations/{conversation_id}/suggested-apps", response_model=dict, tags=['conversations'])
 def get_conversation_suggested_apps(request: Request, conversation_id: str):
     uid = request.state.uid
     from utils.apps import get_available_apps, get_available_app_by_id_with_reviews
@@ -715,7 +719,7 @@ def get_conversation_suggested_apps(request: Request, conversation_id: str):
     return {"suggested_apps": [app.dict() for app in suggested_apps], "conversation_id": conversation_id}
 
 
-@router.post(
+@_firebase_router.post(
     "/v1/conversations/{conversation_id}/test-prompt",
     response_model=dict,
     tags=['conversations'],
@@ -742,7 +746,7 @@ def test_prompt(request: Request, conversation_id: str, data: TestPromptRequest)
 # *********************************************
 
 
-@router.post(
+@_firebase_router.post(
     '/v1/conversations/merge',
     response_model=MergeConversationsResponse,
     tags=['conversations'],
@@ -797,3 +801,8 @@ async def merge_conversations(request: Request, data: MergeConversationsRequest,
     return MergeConversationsResponse(
         status="merging", message="Merge started", warning=warning_message, conversation_ids=data.conversation_ids
     )
+
+
+router = APIRouter()
+router.include_router(_public_router)
+router.include_router(_firebase_router)

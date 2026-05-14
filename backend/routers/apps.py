@@ -110,6 +110,7 @@ from utils.llm.persona import generate_persona_intro_message
 from utils.llm.app_generator import generate_description
 from utils.llm.usage_tracker import track_usage, Features
 from utils.notifications import send_notification, send_app_review_reply_notification, send_new_app_review_notification
+from utils.auth_middleware import require_firebase
 from utils.other import endpoints as auth
 from models.app import App, ActionType, AppCreate, AppUpdate, AppBaseModel
 from utils.other.storage import upload_app_logo, delete_app_logo, upload_app_thumbnail, get_app_thumbnail_url
@@ -123,7 +124,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+_public_router = APIRouter()
+_firebase_router = APIRouter(dependencies=[Depends(require_firebase)])
+_custom_router = APIRouter()
 
 
 def _write_file(path: str, data: bytes):
@@ -208,21 +211,21 @@ def _get_categories():
 # ******************************************************
 
 
-@router.get('/v1/apps', tags=['v1'], response_model=List[AppBaseModel])
+@_firebase_router.get('/v1/apps', tags=['v1'], response_model=List[AppBaseModel])
 def get_apps(request: Request, include_reviews: bool = True):
     uid = request.state.uid
     apps = get_available_apps(uid, include_reviews=include_reviews)
     return [normalize_app_numeric_fields(app.to_reduced_dict()) for app in apps]
 
 
-@router.get('/v1/apps/enabled', tags=['v1'])
+@_firebase_router.get('/v1/apps/enabled', tags=['v1'])
 def get_user_enabled_apps(request: Request):
     uid = request.state.uid
     """Returns the list of app IDs the user has enabled/installed."""
     return get_enabled_apps(uid)
 
 
-@router.get('/v2/apps', tags=['v2'])
+@_public_router.get('/v2/apps', tags=['v2'])
 def get_apps_v2(
     capability: str | None = Query(default=None, description='Filter by capability id'),
     offset: int = Query(default=0, ge=0),
@@ -291,7 +294,7 @@ def get_apps_v2(
     return res
 
 
-@router.get('/v2/apps/capability/{capability_id}/grouped', tags=['v2'])
+@_public_router.get('/v2/apps/capability/{capability_id}/grouped', tags=['v2'])
 def get_capability_apps_grouped_by_category(capability_id: str, include_reviews: bool = Query(default=True)):
     """Get all apps for a specific capability, grouped by master category.
 
@@ -338,7 +341,7 @@ def get_capability_apps_grouped_by_category(capability_id: str, include_reviews:
     return res
 
 
-@router.get('/v2/apps/search', tags=['v2'])
+@_firebase_router.get('/v2/apps/search', tags=['v2'])
 def search_apps(
     request: Request,
     q: str | None = Query(default=None, description='Search query for app name or description'),
@@ -443,7 +446,7 @@ def search_apps(
     }
 
 
-@router.get('/v1/approved-apps', tags=['v1'], response_model=List[AppBaseModel])
+@_public_router.get('/v1/approved-apps', tags=['v1'], response_model=List[AppBaseModel])
 def get_approved_apps(include_reviews: bool = False):
     apps = get_approved_available_apps(include_reviews=include_reviews)
     # Always exclude persona type apps
@@ -451,7 +454,7 @@ def get_approved_apps(include_reviews: bool = False):
     return [normalize_app_numeric_fields(app.to_reduced_dict()) for app in filtered_apps]
 
 
-@router.get('/v1/apps/popular', tags=['v1'], response_model=List[AppBaseModel])
+@_public_router.get('/v1/apps/popular', tags=['v1'], response_model=List[AppBaseModel])
 def get_popular_apps_endpoint():
     apps = get_popular_apps()
     # Always exclude persona type apps
@@ -459,7 +462,7 @@ def get_popular_apps_endpoint():
     return [normalize_app_numeric_fields(app.to_reduced_dict()) for app in filtered_apps]
 
 
-@router.post('/v1/apps', tags=['v1'])
+@_firebase_router.post('/v1/apps', tags=['v1'])
 def create_app(request: Request, app_data: str = Form(...), file: UploadFile = File(...)):
     uid = request.state.uid
     data = json.loads(app_data)
@@ -541,7 +544,7 @@ def create_app(request: Request, app_data: str = Form(...), file: UploadFile = F
     return {'status': 'ok', 'app_id': app.id}
 
 
-@router.post('/v1/personas', tags=['v1'])
+@_firebase_router.post('/v1/personas', tags=['v1'])
 async def create_persona(request: Request, persona_data: str = Form(...), file: UploadFile = File(...)):
     uid = request.state.uid
     data = json.loads(persona_data)
@@ -584,7 +587,7 @@ async def create_persona(request: Request, persona_data: str = Form(...), file: 
     return {'status': 'ok', 'app_id': data['id'], 'username': data['username']}
 
 
-@router.patch('/v1/personas/{persona_id}', tags=['v1'])
+@_firebase_router.patch('/v1/personas/{persona_id}', tags=['v1'])
 async def update_persona(
     request: Request, persona_id: str, persona_data: str = Form(...), file: UploadFile = File(None)
 ):
@@ -633,7 +636,7 @@ async def update_persona(
     return {'status': 'ok', 'app_id': persona_id, 'username': data['username']}
 
 
-@router.get('/v1/personas', tags=['v1'])
+@_firebase_router.get('/v1/personas', tags=['v1'])
 def get_persona_details(request: Request):
     uid = request.state.uid
     app = get_persona_by_uid(uid)
@@ -650,7 +653,7 @@ def get_persona_details(request: Request):
     return app
 
 
-@router.post('/v1/user/persona', tags=['v1'])
+@_firebase_router.post('/v1/user/persona', tags=['v1'])
 async def get_or_create_user_persona(request: Request):
     uid = request.state.uid
     """Get or create a user persona.
@@ -706,7 +709,7 @@ async def get_or_create_user_persona(request: Request):
     return persona_data
 
 
-@router.patch('/v1/apps/{app_id}', tags=['v1'])
+@_firebase_router.patch('/v1/apps/{app_id}', tags=['v1'])
 def update_app(request: Request, app_id: str, app_data: str = Form(...), file: UploadFile = File(None)):
     uid = request.state.uid
     data = json.loads(app_data)
@@ -762,7 +765,7 @@ def update_app(request: Request, app_id: str, app_data: str = Form(...), file: U
     return {'status': 'ok'}
 
 
-@router.post('/v1/apps/{app_id}/refresh-manifest', tags=['v1'])
+@_firebase_router.post('/v1/apps/{app_id}/refresh-manifest', tags=['v1'])
 def refresh_app_manifest(request: Request, app_id: str):
     uid = request.state.uid
     """
@@ -823,7 +826,7 @@ def refresh_app_manifest(request: Request, app_id: str):
     return {'status': 'ok', 'tools_count': tools_count}
 
 
-@router.delete('/v1/apps/{app_id}', tags=['v1'])
+@_firebase_router.delete('/v1/apps/{app_id}', tags=['v1'])
 def delete_app(request: Request, app_id: str):
     uid = request.state.uid
     app = get_available_app_by_id(app_id, uid)
@@ -838,7 +841,7 @@ def delete_app(request: Request, app_id: str):
     return {'status': 'ok'}
 
 
-@router.get('/v1/apps/{app_id}', tags=['v1'])
+@_firebase_router.get('/v1/apps/{app_id}', tags=['v1'])
 def get_app_details(request: Request, app_id: str):
     uid = request.state.uid
     app = get_available_app_by_id_with_reviews(app_id, uid)
@@ -865,7 +868,7 @@ def get_app_details(request: Request, app_id: str):
     return app
 
 
-@router.get('/v1/app-categories', tags=['v1'])
+@_public_router.get('/v1/app-categories', tags=['v1'])
 def get_app_categories():
     return [
         {'title': 'Conversation Analysis', 'id': 'conversation-analysis'},
@@ -887,7 +890,7 @@ def get_app_categories():
     ]
 
 
-@router.post('/v1/apps/review', tags=['v1'])
+@_firebase_router.post('/v1/apps/review', tags=['v1'])
 def review_app(request: Request, app_id: str, data: dict):
     uid = request.state.uid
     if 'score' not in data:
@@ -923,7 +926,7 @@ def review_app(request: Request, app_id: str, data: dict):
     return {'status': 'ok'}
 
 
-@router.patch('/v1/apps/{app_id}/review', tags=['v1'])
+@_firebase_router.patch('/v1/apps/{app_id}/review', tags=['v1'])
 def update_app_review(request: Request, app_id: str, data: dict):
     uid = request.state.uid
     if 'score' not in data:
@@ -962,7 +965,7 @@ def update_app_review(request: Request, app_id: str, data: dict):
     return {'status': 'ok'}
 
 
-@router.patch('/v1/apps/{app_id}/review/reply', tags=['v1'])
+@_firebase_router.patch('/v1/apps/{app_id}/review/reply', tags=['v1'])
 def reply_to_review(request: Request, app_id: str, data: dict):
     uid = request.state.uid
     app = get_available_app_by_id(app_id, uid)
@@ -994,14 +997,14 @@ def reply_to_review(request: Request, app_id: str, data: dict):
     return {'status': 'ok'}
 
 
-@router.get('/v1/apps/{app_id}/reviews', tags=['v1'])
+@_public_router.get('/v1/apps/{app_id}/reviews', tags=['v1'])
 def app_reviews(app_id: str):
     reviews = get_app_reviews(app_id)
     reviews = [details for details in reviews.values() if details['review']]
     return reviews
 
 
-@router.patch('/v1/apps/{app_id}/change-visibility', tags=['v1'])
+@_firebase_router.patch('/v1/apps/{app_id}/change-visibility', tags=['v1'])
 def change_app_visibility(request: Request, app_id: str, private: bool):
     uid = request.state.uid
     app = get_available_app_by_id(app_id, uid)
@@ -1015,7 +1018,7 @@ def change_app_visibility(request: Request, app_id: str, private: bool):
     return {'status': 'ok'}
 
 
-@router.get('/v1/app/proactive-notification-scopes', tags=['v1'])
+@_public_router.get('/v1/app/proactive-notification-scopes', tags=['v1'])
 def get_notification_scopes():
     return [
         {'title': 'User Name', 'id': 'user_name'},
@@ -1025,7 +1028,7 @@ def get_notification_scopes():
     ]
 
 
-@router.get('/v1/app-capabilities', tags=['v1'])
+@_public_router.get('/v1/app-capabilities', tags=['v1'])
 def get_app_capabilities():
     return [
         {'title': 'Chat', 'id': 'chat'},
@@ -1085,14 +1088,14 @@ def get_app_capabilities():
 
 
 # @deprecated
-@router.get('/v1/app/payment-plans', tags=['v1'])
+@_public_router.get('/v1/app/payment-plans', tags=['v1'])
 def get_payment_plans_v1():
     return [
         {'title': 'Monthly Recurring', 'id': 'monthly_recurring'},
     ]
 
 
-@router.get('/v1/app/plans', tags=['v1'])
+@_firebase_router.get('/v1/app/plans', tags=['v1'])
 def get_payment_plans(request: Request):
     uid = request.state.uid
     if not uid or len(uid) == 0 or not is_permit_payment_plan_get(uid):
@@ -1102,7 +1105,7 @@ def get_payment_plans(request: Request):
     ]
 
 
-@router.post('/v1/app/generate-description', tags=['v1'])
+@_firebase_router.post('/v1/app/generate-description', tags=['v1'])
 def generate_description_endpoint(request: Request, data: dict):
     uid = request.state.uid
     if data['name'] == '':
@@ -1116,7 +1119,7 @@ def generate_description_endpoint(request: Request, data: dict):
     }
 
 
-@router.post('/v1/app/generate-description-emoji', tags=['v1'])
+@_firebase_router.post('/v1/app/generate-description-emoji', tags=['v1'])
 def generate_description_and_emoji_endpoint(request: Request, data: dict):
     uid = request.state.uid
     """
@@ -1140,7 +1143,7 @@ def generate_description_and_emoji_endpoint(request: Request, data: dict):
 # ******************************************************
 
 
-@router.get(
+@_firebase_router.get(
     '/v1/app/generate-prompts', tags=['v1'], dependencies=[Depends(auth.with_rate_limit("apps:generate_prompts"))]
 )
 async def generate_sample_prompts_endpoint(request: Request):
@@ -1212,7 +1215,7 @@ Be creative, fun, and varied. No generic ideas."""
         }
 
 
-@router.post('/v1/app/generate', tags=['v1'])
+@_firebase_router.post('/v1/app/generate', tags=['v1'])
 async def generate_app_endpoint(request: Request, data: dict):
     uid = request.state.uid
     """
@@ -1252,7 +1255,7 @@ async def generate_app_endpoint(request: Request, data: dict):
         raise HTTPException(status_code=500, detail=f'Failed to generate app: {str(e)}')
 
 
-@router.post('/v1/app/generate-icon', tags=['v1'])
+@_firebase_router.post('/v1/app/generate-icon', tags=['v1'])
 async def generate_app_icon_endpoint(request: Request, data: dict):
     uid = request.state.uid
     """
@@ -1291,7 +1294,7 @@ async def generate_app_icon_endpoint(request: Request, data: dict):
 # ******************************************************
 
 
-@router.get('/v1/personas/twitter/profile', tags=['v1'])
+@_firebase_router.get('/v1/personas/twitter/profile', tags=['v1'])
 async def get_twitter_profile_data(request: Request, handle: str):
     uid = request.state.uid
     if handle.startswith('@'):
@@ -1325,7 +1328,7 @@ async def get_twitter_profile_data(request: Request, handle: str):
     return res
 
 
-@router.get('/v1/personas/twitter/verify-ownership', tags=['v1'])
+@_firebase_router.get('/v1/personas/twitter/verify-ownership', tags=['v1'])
 async def verify_twitter_ownership_tweet(request: Request, username: str, handle: str, persona_id: str | None = None):
     # Get user info to check auth provider
     uid = request.state.uid
@@ -1357,7 +1360,7 @@ async def verify_twitter_ownership_tweet(request: Request, username: str, handle
     return res
 
 
-@router.get('/v1/personas/twitter/initial-message', tags=['v1'])
+@_firebase_router.get('/v1/personas/twitter/initial-message', tags=['v1'])
 async def get_twitter_initial_message(request: Request, username: str):
     uid = request.state.uid
     persona = get_persona_by_username_db(username)
@@ -1368,7 +1371,7 @@ async def get_twitter_initial_message(request: Request, username: str):
     return {'message': ''}
 
 
-@router.post('/v1/apps/migrate-owner', tags=['v1'])
+@_firebase_router.post('/v1/apps/migrate-owner', tags=['v1'])
 async def migrate_app_owner(request: Request, old_id):
     # Migrate app ownership in the database
     uid = request.state.uid
@@ -1431,7 +1434,7 @@ def _serialize_chat_tools_for_firestore(tools) -> list:
     return result
 
 
-@router.post('/v1/apps/mcp', tags=['v1'])
+@_firebase_router.post('/v1/apps/mcp', tags=['v1'])
 async def add_mcp_server(request: Request, data: McpServerRequest):
     uid = request.state.uid
     """Add a remote MCP server as a private app with chat tools.
@@ -1575,7 +1578,7 @@ async def add_mcp_server(request: Request, data: McpServerRequest):
         }
 
 
-@router.get('/v1/apps/mcp/callback', tags=['v1'])
+@_firebase_router.get('/v1/apps/mcp/callback', tags=['v1'])
 async def mcp_oauth_callback(request: Request, code: str, state: str):
     uid = request.state.uid
     """OAuth callback for MCP server authorization.
@@ -1666,7 +1669,7 @@ async def mcp_oauth_callback(request: Request, code: str, state: str):
     """)
 
 
-@router.post('/v1/apps/{app_id}/mcp/refresh', tags=['v1'])
+@_firebase_router.post('/v1/apps/{app_id}/mcp/refresh', tags=['v1'])
 async def refresh_mcp_tools(request: Request, app_id: str):
     uid = request.state.uid
     """Re-discover tools from an MCP server and update the app."""
@@ -1732,7 +1735,7 @@ async def refresh_mcp_tools(request: Request, app_id: str):
 # ******************************************************
 
 
-@router.post('/v1/apps/enable')
+@_firebase_router.post('/v1/apps/enable')
 async def enable_app_endpoint(request: Request, app_id: str):
     uid = request.state.uid
     app = get_available_app_by_id(app_id, uid)
@@ -1759,7 +1762,7 @@ async def enable_app_endpoint(request: Request, app_id: str):
     return {'status': 'ok'}
 
 
-@router.post('/v1/apps/disable')
+@_firebase_router.post('/v1/apps/disable')
 def disable_app_endpoint(request: Request, app_id: str):
     # Allow users to always disable apps they have installed, even if the app
     # was made private after installation (see issue #4886).
@@ -1781,7 +1784,7 @@ def disable_app_endpoint(request: Request, app_id: str):
 # ******************************************************
 
 
-@router.post('/v1/apps/tester', tags=['v1'])
+@_custom_router.post('/v1/apps/tester', tags=['v1'])
 def add_new_tester(request: Request, data: dict, secret_key: str = Header(...)):
     uid = request.state.uid
     if secret_key != os.getenv('ADMIN_KEY'):
@@ -1795,7 +1798,7 @@ def add_new_tester(request: Request, data: dict, secret_key: str = Header(...)):
     return {'status': 'ok'}
 
 
-@router.post('/v1/apps/tester/access', tags=['v1'])
+@_custom_router.post('/v1/apps/tester/access', tags=['v1'])
 def add_app_access_tester(request: Request, data: dict, secret_key: str = Header(...)):
     uid = request.state.uid
     if secret_key != os.getenv('ADMIN_KEY'):
@@ -1808,7 +1811,7 @@ def add_app_access_tester(request: Request, data: dict, secret_key: str = Header
     return {'status': 'ok'}
 
 
-@router.delete('/v1/apps/tester/access', tags=['v1'])
+@_custom_router.delete('/v1/apps/tester/access', tags=['v1'])
 def remove_app_access_tester(request: Request, data: dict, secret_key: str = Header(...)):
     uid = request.state.uid
     if secret_key != os.getenv('ADMIN_KEY'):
@@ -1821,7 +1824,7 @@ def remove_app_access_tester(request: Request, data: dict, secret_key: str = Hea
     return {'status': 'ok'}
 
 
-@router.get('/v1/apps/tester/check', tags=['v1'])
+@_custom_router.get('/v1/apps/tester/check', tags=['v1'])
 def check_is_tester(request: Request):
     uid = request.state.uid
     if is_tester(uid):
@@ -1829,7 +1832,7 @@ def check_is_tester(request: Request):
     return {'is_tester': False}
 
 
-@router.get('/v1/apps/public/unapproved', tags=['v1'])
+@_custom_router.get('/v1/apps/public/unapproved', tags=['v1'])
 def get_unapproved_public_apps(secret_key: str = Header(...)):
     if secret_key != os.getenv('ADMIN_KEY'):
         raise HTTPException(status_code=403, detail='You are not authorized to perform this action')
@@ -1837,7 +1840,7 @@ def get_unapproved_public_apps(secret_key: str = Header(...)):
     return apps
 
 
-@router.patch('/v1/apps/{app_id}/popular', tags=['v1'])
+@_custom_router.patch('/v1/apps/{app_id}/popular', tags=['v1'])
 def set_app_popular(app_id: str, value: bool = Query(...), secret_key: str = Header(...)):
     if secret_key != os.getenv('ADMIN_KEY'):
         raise HTTPException(status_code=403, detail='You are not authorized to perform this action')
@@ -1847,7 +1850,7 @@ def set_app_popular(app_id: str, value: bool = Query(...), secret_key: str = Hea
     return {'status': 'ok'}
 
 
-@router.post('/v1/apps/{app_id}/approve', tags=['v1'])
+@_custom_router.post('/v1/apps/{app_id}/approve', tags=['v1'])
 def approve_app(app_id: str, uid: str, secret_key: str = Header(...)):
     if secret_key != os.getenv('ADMIN_KEY'):
         raise HTTPException(status_code=403, detail='You are not authorized to perform this action')
@@ -1861,7 +1864,7 @@ def approve_app(app_id: str, uid: str, secret_key: str = Header(...)):
     return {'status': 'ok'}
 
 
-@router.post('/v1/apps/{app_id}/reject', tags=['v1'])
+@_custom_router.post('/v1/apps/{app_id}/reject', tags=['v1'])
 def reject_app(app_id: str, uid: str, secret_key: str = Header(...)):
     if secret_key != os.getenv('ADMIN_KEY'):
         raise HTTPException(status_code=403, detail='You are not authorized to perform this action')
@@ -1878,8 +1881,8 @@ def reject_app(app_id: str, uid: str, secret_key: str = Header(...)):
     return {'status': 'ok'}
 
 
-@router.delete('/v1/personas/{persona_id}', tags=['v1'])
-@router.post('/v1/app/thumbnails', tags=['v1'])
+@_custom_router.delete('/v1/personas/{persona_id}', tags=['v1'])
+@_firebase_router.post('/v1/app/thumbnails', tags=['v1'])
 async def upload_app_thumbnail_endpoint(request: Request, file: UploadFile = File(...)):
     uid = request.state.uid
     """Upload a thumbnail image for an app.
@@ -1923,7 +1926,7 @@ def delete_persona(persona_id: str, secret_key: str = Header(...)):
     return {'status': 'ok'}
 
 
-@router.get('/v1/personas/{persona_id}', tags=['v1'])
+@_custom_router.get('/v1/personas/{persona_id}', tags=['v1'])
 def get_personas(persona_id: str, secret_key: str = Header(...)):
     if secret_key != os.getenv('ADMIN_KEY'):
         raise HTTPException(status_code=403, detail='You are not authorized to perform this action')
@@ -1934,7 +1937,7 @@ def get_personas(persona_id: str, secret_key: str = Header(...)):
     return persona
 
 
-@router.post('/v1/apps/{app_id}/keys', tags=['v1'])
+@_firebase_router.post('/v1/apps/{app_id}/keys', tags=['v1'])
 def create_api_key_for_app(request: Request, app_id: str):
     uid = request.state.uid
     app = get_available_app_by_id(app_id, uid)
@@ -1953,7 +1956,7 @@ def create_api_key_for_app(request: Request, app_id: str):
     return {'id': data['id'], 'secret': key, 'label': label, 'created_at': data['created_at']}  # with sk_
 
 
-@router.get('/v1/apps/{app_id}/keys', tags=['v1'])
+@_firebase_router.get('/v1/apps/{app_id}/keys', tags=['v1'])
 def list_api_keys(request: Request, app_id: str):
     uid = request.state.uid
     app = get_available_app_by_id(app_id, uid)
@@ -1967,7 +1970,7 @@ def list_api_keys(request: Request, app_id: str):
     return keys
 
 
-@router.delete('/v1/apps/{app_id}/keys/{key_id}', tags=['v1'])
+@_firebase_router.delete('/v1/apps/{app_id}/keys/{key_id}', tags=['v1'])
 def delete_api_key(request: Request, app_id: str, key_id: str):
     uid = request.state.uid
     app = get_available_app_by_id(app_id, uid)
@@ -1987,7 +1990,7 @@ def delete_api_key(request: Request, app_id: str, key_id: str):
 # ******************************************************
 
 
-@router.get('/v1/summary-app-ids', tags=['v1'])
+@_custom_router.get('/v1/summary-app-ids', tags=['v1'])
 def get_summary_app_ids(secret_key: str = Header(...)):
     """Get all conversation summary app IDs from Redis"""
     if secret_key != os.getenv('ADMIN_KEY'):
@@ -1998,7 +2001,7 @@ def get_summary_app_ids(secret_key: str = Header(...)):
     return {'app_ids': app_ids or []}
 
 
-@router.post('/v1/summary-app-ids/{app_id}', tags=['v1'])
+@_custom_router.post('/v1/summary-app-ids/{app_id}', tags=['v1'])
 def add_summary_app_id(app_id: str, secret_key: str = Header(...)):
     """Add an app ID to the conversation summary apps list"""
     if secret_key != os.getenv('ADMIN_KEY'):
@@ -2011,7 +2014,7 @@ def add_summary_app_id(app_id: str, secret_key: str = Header(...)):
         return {'status': 'ok', 'message': f'App {app_id} already exists in conversation summary apps'}
 
 
-@router.delete('/v1/summary-app-ids/{app_id}', tags=['v1'])
+@_custom_router.delete('/v1/summary-app-ids/{app_id}', tags=['v1'])
 def delete_summary_app_id(app_id: str, secret_key: str = Header(...)):
     """Remove an app ID from the conversation summary apps list"""
     if secret_key != os.getenv('ADMIN_KEY'):
@@ -2022,3 +2025,9 @@ def delete_summary_app_id(app_id: str, secret_key: str = Header(...)):
         return {'status': 'ok', 'message': f'App {app_id} removed from conversation summary apps'}
     else:
         raise HTTPException(status_code=404, detail=f'App {app_id} not found in conversation summary apps')
+
+
+router = APIRouter()
+router.include_router(_public_router)
+router.include_router(_firebase_router)
+router.include_router(_custom_router)

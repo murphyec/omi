@@ -9,7 +9,8 @@ from fastapi.responses import RedirectResponse, Response, HTMLResponse
 from routers.firmware import get_omi_github_releases, extract_key_value_pairs
 from database.redis_db import delete_generic_cache
 
-router = APIRouter()
+_public_router = APIRouter()
+_custom_router = APIRouter()
 
 VALID_CHANNELS = {"beta", "stable"}
 
@@ -339,7 +340,7 @@ def _generate_appcast_xml(items: List[Dict], platform: str) -> str:
     return '\n'.join(lines)
 
 
-@router.get("/v2/desktop/appcast.xml")
+@_public_router.get("/v2/desktop/appcast.xml")
 async def get_desktop_appcast_xml(platform: str = Query(default="macos", pattern="^(macos|windows|linux)$")):
     """
     Sparkle appcast XML endpoint for desktop auto-updates.
@@ -400,7 +401,7 @@ async def get_desktop_appcast_xml(platform: str = Query(default="macos", pattern
         raise HTTPException(status_code=500, detail=f"Error generating appcast: {str(e)}")
 
 
-@router.get("/v2/desktop/download/latest")
+@_public_router.get("/v2/desktop/download/latest")
 async def download_latest_desktop_release(
     platform: str = Query(default="macos", pattern="^(macos|windows|linux)$"),
     channel: str = Query(default="stable", pattern="^(beta|stable)$"),
@@ -445,7 +446,7 @@ async def download_latest_desktop_release(
     raise HTTPException(status_code=404, detail=f"No DMG installer found for channel: {channel}")
 
 
-@router.get("/v2/desktop/download/beta")
+@_public_router.get("/v2/desktop/download/beta")
 async def download_beta_desktop_release(platform: str = Query(default="macos", pattern="^(macos|windows|linux)$")):
     """
     Redirect to the latest beta desktop release DMG installer.
@@ -454,7 +455,7 @@ async def download_beta_desktop_release(platform: str = Query(default="macos", p
     return await download_latest_desktop_release(platform=platform, channel="beta")
 
 
-@router.post("/v2/desktop/clear-cache")
+@_custom_router.post("/v2/desktop/clear-cache")
 async def clear_desktop_cache(secret_key: str = Header(...)):
     """
     Clear the GitHub releases cache for desktop updates.
@@ -467,3 +468,8 @@ async def clear_desktop_cache(secret_key: str = Header(...)):
     delete_generic_cache("github_releases_desktop")
     delete_generic_cache("github_releases_desktop:lkg")
     return {"success": True, "message": "Desktop releases cache cleared successfully"}
+
+
+router = APIRouter()
+router.include_router(_public_router)
+router.include_router(_custom_router)

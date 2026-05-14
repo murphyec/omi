@@ -21,12 +21,15 @@ from database.announcements import (
     update_announcement,
 )
 from models.announcement import Announcement, AnnouncementType, Display, Targeting, TriggerType
+from utils.auth_middleware import require_firebase
 from utils.other import endpoints as auth_endpoints
 
-router = APIRouter()
+_public_router = APIRouter()
+_firebase_router = APIRouter(dependencies=[Depends(require_firebase)])
+_custom_router = APIRouter()
 
 
-@router.get("/v1/announcements/changelogs", response_model=List[Announcement])
+@_public_router.get("/v1/announcements/changelogs", response_model=List[Announcement])
 async def get_changelogs(
     from_version: Optional[str] = Query(None, description="Previous app version (before upgrade)"),
     to_version: Optional[str] = Query(None, description="Current app version (after upgrade)"),
@@ -55,7 +58,7 @@ async def get_changelogs(
     return changelogs
 
 
-@router.get("/v1/announcements/features", response_model=List[Announcement])
+@_public_router.get("/v1/announcements/features", response_model=List[Announcement])
 async def get_features(
     version: str = Query(..., description="Version user upgraded to"),
     version_type: str = Query(..., description="Type: 'app' or 'firmware'"),
@@ -75,7 +78,7 @@ async def get_features(
     return features
 
 
-@router.get("/v1/announcements/general", response_model=List[Announcement])
+@_public_router.get("/v1/announcements/general", response_model=List[Announcement])
 async def get_announcements(
     last_checked_at: Optional[str] = Query(
         None, description="ISO timestamp of last check (only returns newer announcements)"
@@ -103,7 +106,7 @@ async def get_announcements(
 # ----------------------------
 
 
-@router.get("/v1/announcements/pending", response_model=List[Announcement], tags=["announcements"])
+@_firebase_router.get("/v1/announcements/pending", response_model=List[Announcement], tags=["announcements"])
 async def get_pending_announcements_endpoint(
     request: Request,
     app_version: str = Query(..., description="Current app version (e.g., '1.0.522+240')"),
@@ -157,7 +160,7 @@ class DismissAnnouncementRequest(BaseModel):
     cta_clicked: bool = False
 
 
-@router.post("/v1/announcements/{announcement_id}/dismiss", tags=["announcements"])
+@_firebase_router.post("/v1/announcements/{announcement_id}/dismiss", tags=["announcements"])
 async def dismiss_announcement_endpoint(
     request: Request,
     announcement_id: str,
@@ -223,7 +226,7 @@ class UpdateAnnouncementRequest(BaseModel):
     content: Optional[dict] = None
 
 
-@router.get("/v1/announcements/all", response_model=List[Announcement], tags=["admin"])
+@_custom_router.get("/v1/announcements/all", response_model=List[Announcement], tags=["admin"])
 async def list_all_announcements(
     secret_key: str = Header(..., description="Admin secret key"),
     announcement_type: Optional[AnnouncementType] = Query(None, description="Filter by type"),
@@ -241,7 +244,7 @@ async def list_all_announcements(
     return announcements
 
 
-@router.get("/v1/announcements/{announcement_id}", response_model=Announcement, tags=["admin"])
+@_custom_router.get("/v1/announcements/{announcement_id}", response_model=Announcement, tags=["admin"])
 async def get_announcement(announcement_id: str, secret_key: str = Header(..., description="Admin secret key")):
     """
     Get a single announcement by ID.
@@ -256,7 +259,7 @@ async def get_announcement(announcement_id: str, secret_key: str = Header(..., d
     return announcement
 
 
-@router.post("/v1/announcements", response_model=Announcement, tags=["admin"])
+@_custom_router.post("/v1/announcements", response_model=Announcement, tags=["admin"])
 async def create_announcement_endpoint(
     data: CreateAnnouncementRequest, secret_key: str = Header(..., description="Admin secret key")
 ):
@@ -294,7 +297,7 @@ async def create_announcement_endpoint(
     return created
 
 
-@router.put("/v1/announcements/{announcement_id}", response_model=Announcement, tags=["admin"])
+@_custom_router.put("/v1/announcements/{announcement_id}", response_model=Announcement, tags=["admin"])
 async def update_announcement_endpoint(
     announcement_id: str, data: UpdateAnnouncementRequest, secret_key: str = Header(..., description="Admin secret key")
 ):
@@ -335,7 +338,7 @@ async def update_announcement_endpoint(
     return updated
 
 
-@router.delete("/v1/announcements/{announcement_id}", tags=["admin"])
+@_custom_router.delete("/v1/announcements/{announcement_id}", tags=["admin"])
 async def delete_announcement_endpoint(
     announcement_id: str,
     secret_key: str = Header(..., description="Admin secret key"),
@@ -360,3 +363,9 @@ async def delete_announcement_endpoint(
     else:
         success = delete_announcement(announcement_id)
         return {"success": success, "message": "Announcement permanently deleted"}
+
+
+router = APIRouter()
+router.include_router(_public_router)
+router.include_router(_firebase_router)
+router.include_router(_custom_router)

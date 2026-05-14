@@ -14,6 +14,7 @@ from twilio.twiml.voice_response import VoiceResponse, Dial
 import database.phone_calls as phone_calls_db
 import database.phone_call_usage as phone_call_usage_db
 from utils.phone_calls import check_call_access, check_destination_allowed, get_quota_snapshot
+from utils.auth_middleware import require_firebase
 from utils.other import endpoints as auth
 from utils.other.endpoints import rate_limit_dependency
 from utils.twilio_service import (
@@ -35,7 +36,8 @@ def _redact_phone(number: str) -> str:
     return '***'
 
 
-router = APIRouter()
+_firebase_router = APIRouter(dependencies=[Depends(require_firebase)])
+_custom_router = APIRouter()
 
 # ************************************************
 # *********** REQUEST/RESPONSE MODELS ************
@@ -81,7 +83,7 @@ class TokenResponse(BaseModel):
 # ************************************************
 
 
-@router.post("/v1/phone/numbers/verify", response_model=VerifyPhoneNumberResponse, tags=['phone-calls'])
+@_firebase_router.post("/v1/phone/numbers/verify", response_model=VerifyPhoneNumberResponse, tags=['phone-calls'])
 def verify_phone_number(
     request: Request,
     data: VerifyPhoneNumberRequest,
@@ -127,7 +129,7 @@ def verify_phone_number(
         raise HTTPException(status_code=500, detail=f"Failed to start verification: {str(e)}")
 
 
-@router.post("/v1/phone/numbers/verify/check", response_model=CheckVerificationResponse, tags=['phone-calls'])
+@_firebase_router.post("/v1/phone/numbers/verify/check", response_model=CheckVerificationResponse, tags=['phone-calls'])
 def check_phone_verification(
     request: Request,
     data: CheckVerificationRequest,
@@ -173,7 +175,7 @@ def check_phone_verification(
     return CheckVerificationResponse(verified=True, phone_number_id=phone_number_id)
 
 
-@router.get("/v1/phone/numbers", tags=['phone-calls'])
+@_firebase_router.get("/v1/phone/numbers", tags=['phone-calls'])
 def list_phone_numbers(request: Request):
     uid = request.state.uid
     """List all verified phone numbers for the user."""
@@ -182,7 +184,7 @@ def list_phone_numbers(request: Request):
     return {'numbers': numbers}
 
 
-@router.delete("/v1/phone/numbers/{phone_number_id}", tags=['phone-calls'])
+@_firebase_router.delete("/v1/phone/numbers/{phone_number_id}", tags=['phone-calls'])
 def remove_phone_number(request: Request, phone_number_id: str):
     uid = request.state.uid
     """Remove a verified phone number."""
@@ -205,7 +207,7 @@ def remove_phone_number(request: Request, phone_number_id: str):
 # ************************************************
 
 
-@router.post("/v1/phone/token", response_model=TokenResponse, tags=['phone-calls'])
+@_firebase_router.post("/v1/phone/token", response_model=TokenResponse, tags=['phone-calls'])
 def get_phone_token(request: Request):
     uid = request.state.uid
     """Generate a Twilio access token for making VoIP calls."""
@@ -227,7 +229,7 @@ def get_phone_token(request: Request):
 # ************************************************
 
 
-@router.post("/v1/phone/twiml", tags=['phone-calls'])
+@_custom_router.post("/v1/phone/twiml", tags=['phone-calls'])
 async def twiml_voice_webhook(request: Request):
     """
     TwiML webhook called by Twilio when a VoIP call is initiated from the client SDK.
@@ -327,3 +329,8 @@ async def twiml_voice_webhook(request: Request):
     response.append(dial)
 
     return Response(content=str(response), media_type='text/xml')
+
+
+router = APIRouter()
+router.include_router(_firebase_router)
+router.include_router(_custom_router)
