@@ -22,9 +22,11 @@ from datetime import datetime, timezone
 from typing import Dict, Optional, Tuple
 
 from cachetools import TTLCache
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, WebSocketException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.websockets import WebSocket
+
+import database.users as users_db
 
 logger = logging.getLogger('byok')
 
@@ -48,8 +50,6 @@ def get_cached_byok_state(uid: str) -> dict:
         cached = _byok_state_cache.get(uid)
     if cached is not None:
         return cached
-
-    import database.users as users_db
 
     state = users_db.get_byok_state(uid)
     with _byok_state_cache_lock:
@@ -158,8 +158,6 @@ def _check_byok_validity(uid: str) -> Optional[str]:
     if not request_keys:
         return None
 
-    import database.users as users_db
-
     state = get_cached_byok_state(uid)
 
     # Replicate is_byok_active logic on the already-fetched state to avoid a
@@ -252,8 +250,6 @@ def validate_and_return_byok_keys(uid: str, keys: Dict[str, str]) -> Dict[str, s
     if not keys:
         return {}
 
-    import database.users as users_db
-
     state = get_cached_byok_state(uid)
 
     is_active = False
@@ -287,8 +283,6 @@ def validate_and_return_byok_keys_ws(uid: str, keys: Dict[str, str]) -> Dict[str
     if not keys:
         return {}
 
-    import database.users as users_db
-
     state = get_cached_byok_state(uid)
 
     is_active = False
@@ -307,15 +301,11 @@ def validate_and_return_byok_keys_ws(uid: str, keys: Dict[str, str]) -> Dict[str
         if not raw_key:
             error = f"BYOK key header missing for enrolled provider: {provider}"
             logger.warning('BYOK WS validation failed uid=%s: %s', uid, error)
-            from fastapi import WebSocketException
-
             raise WebSocketException(code=4003, reason=error)
         request_fp = hashlib.sha256(raw_key.encode()).hexdigest()
         if request_fp != stored_fp:
             error = f"BYOK key fingerprint mismatch for provider: {provider}"
             logger.warning('BYOK WS validation failed uid=%s: %s', uid, error)
-            from fastapi import WebSocketException
-
             raise WebSocketException(code=4003, reason=error)
 
     return keys
