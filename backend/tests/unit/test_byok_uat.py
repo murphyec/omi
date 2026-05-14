@@ -86,6 +86,13 @@ def _byok_state(active=True, fingerprints=None, last_seen_at=None):
 # ============================================================================
 
 
+def _mock_request(uid: str) -> MagicMock:
+    """Create a mock Request with request.state.uid set."""
+    req = MagicMock()
+    req.state.uid = uid
+    return req
+
+
 class TestUAT_Activation:
     """Test the full activate → deactivate lifecycle."""
 
@@ -94,7 +101,7 @@ class TestUAT_Activation:
         from routers.users import BYOKActivateRequest, activate_byok_endpoint
 
         data = BYOKActivateRequest(fingerprints=dict(_ENROLLED_FINGERPRINTS))
-        result = activate_byok_endpoint(data, uid='uat-uid')
+        result = activate_byok_endpoint(_mock_request('uat-uid'), data)
         assert result == {"active": True}
         mock_users_db.set_byok_active.assert_called_once_with('uat-uid', dict(_ENROLLED_FINGERPRINTS))
 
@@ -102,7 +109,7 @@ class TestUAT_Activation:
     def test_deactivate_clears_state(self, mock_users_db):
         from routers.users import deactivate_byok_endpoint
 
-        result = deactivate_byok_endpoint(uid='uat-uid')
+        result = deactivate_byok_endpoint(_mock_request('uat-uid'))
         assert result == {"active": False}
         mock_users_db.clear_byok_active.assert_called_once_with('uat-uid')
 
@@ -114,7 +121,7 @@ class TestUAT_Activation:
         del incomplete['deepgram']
         data = BYOKActivateRequest(fingerprints=incomplete)
         with pytest.raises(HTTPException) as exc_info:
-            activate_byok_endpoint(data, uid='uat-uid')
+            activate_byok_endpoint(_mock_request('uat-uid'), data)
         assert exc_info.value.status_code == 400
 
 
@@ -462,16 +469,12 @@ class TestUAT_TranscriptionCreditBypass:
 class TestUAT_LLMClientRouting:
 
     @patch('utils.llm.clients.get_byok_key')
-    def test_openai_proxy_routes_to_byok_key(self, mock_get_key):
+    def test_openai_chat_byok_creates_cached_client(self, mock_get_key):
         mock_get_key.side_effect = lambda p: _FAKE_OPENAI if p == 'openai' else None
-        from utils.llm.clients import _OpenAIChatProxy, _hash_key, _openai_cache
+        from utils.llm.clients import _cached_openai_chat, _hash_key, _openai_cache
 
-        mock_default = MagicMock()
-        proxy = _OpenAIChatProxy(model='gpt-4.1-mini', default=mock_default, ctor_kwargs={})
-        resolved = proxy._resolve()
-        # When BYOK key is present, should NOT return the default client
-        assert resolved is not mock_default
-        # Verify the key hash is in the cache (not the raw key)
+        result = _cached_openai_chat('gpt-4.1-mini', _FAKE_OPENAI, {})
+        assert result is not None
         expected_cache_prefix = f"gpt-4.1-mini:{_hash_key(_FAKE_OPENAI)}:"
         found = any(expected_cache_prefix in k for k in _openai_cache.keys())
         assert found, "BYOK key should create a cached client entry"
@@ -479,21 +482,19 @@ class TestUAT_LLMClientRouting:
     @patch('utils.llm.clients.get_byok_key')
     def test_anthropic_proxy_routes_to_byok_key(self, mock_get_key):
         mock_get_key.side_effect = lambda p: _FAKE_ANTHROPIC if p == 'anthropic' else None
-        from utils.llm.clients import _AnthropicViaOpenAIProxy, _ANTHROPIC_OPENAI_BASE_URL
+        from utils.llm.clients import _AnthropicClientProxy
 
         mock_default = MagicMock()
-        proxy = _AnthropicViaOpenAIProxy(default=mock_default, ctor_kwargs={})
+        proxy = _AnthropicClientProxy(mock_default)
         resolved = proxy._resolve()
-        # Should route to Anthropic's OpenAI-compatible endpoint with BYOK key
-        assert resolved.openai_api_base == _ANTHROPIC_OPENAI_BASE_URL
         assert resolved is not mock_default
 
     @patch('utils.llm.clients.get_byok_key', return_value=None)
     def test_no_byok_uses_default_anthropic(self, mock_get_key):
-        from utils.llm.clients import _AnthropicViaOpenAIProxy
+        from utils.llm.clients import _AnthropicClientProxy
 
         mock_default = MagicMock()
-        proxy = _AnthropicViaOpenAIProxy(default=mock_default, ctor_kwargs={})
+        proxy = _AnthropicClientProxy(mock_default)
         resolved = proxy._resolve()
         assert resolved is mock_default
 
@@ -915,48 +916,54 @@ class TestUAT_EndToEndFlow:
 
 
 class TestUAT_EndpointSignatures:
-    """Verify that all critical endpoints have the BYOK dep wired."""
+    """Verify that all critical endpoints accept Request (AuthMiddleware pattern)."""
 
-    def test_send_message_has_byok_dep(self):
+    def test_send_message_has_request_param(self):
         import inspect
         from routers.chat import send_message
 
         sig = inspect.signature(send_message)
-        assert 'byok_keys' in sig.parameters
+        assert 'request' in sig.parameters
 
-    def test_create_voice_message_has_byok_dep(self):
+    def test_create_voice_message_has_request_param(self):
         import inspect
         from routers.chat import create_voice_message_stream
 
         sig = inspect.signature(create_voice_message_stream)
-        assert 'byok_keys' in sig.parameters
+        assert 'request' in sig.parameters
 
-    def test_transcribe_voice_message_has_byok_dep(self):
+    def test_transcribe_voice_message_has_request_param(self):
         import inspect
         from routers.chat import transcribe_voice_message
 
         sig = inspect.signature(transcribe_voice_message)
-        assert 'byok_keys' in sig.parameters
+        assert 'request' in sig.parameters
 
-    def test_sync_local_files_has_byok_dep(self):
+    def test_sync_local_files_has_request_param(self):
         import inspect
         from routers.sync import sync_local_files
 
         sig = inspect.signature(sync_local_files)
-        assert 'byok_keys' in sig.parameters
+        assert 'request' in sig.parameters
 
-    def test_sync_local_files_v2_has_byok_dep(self):
+    def test_sync_local_files_v2_has_request_param(self):
         import inspect
         from routers.sync import sync_local_files_v2
 
         sig = inspect.signature(sync_local_files_v2)
-        assert 'byok_keys' in sig.parameters
+        assert 'request' in sig.parameters
 
     def test_listen_handler_has_byok_dep(self):
+        """WebSocket handlers still use Depends (middleware doesn't cover WS)."""
         import inspect
-        from routers.transcribe import listen_handler
+
+        try:
+            from routers.transcribe import listen_handler
+        except Exception:
+            pytest.skip("routers.transcribe requires Google Cloud credentials")
 
         sig = inspect.signature(listen_handler)
+        assert 'websocket' in sig.parameters
         assert 'byok_keys' in sig.parameters
 
     def test_auth_dep_does_not_contain_byok_validation(self):
@@ -998,22 +1005,19 @@ class TestUAT_EndpointSignatures:
 
 
 class TestUAT_MiddlewarePresent:
-    """BYOKMiddleware must remain installed for users.py subscription endpoints."""
+    """AuthMiddleware must be installed for unified auth + BYOK handling."""
 
     def test_middleware_in_main(self):
-        import inspect
         import importlib
 
-        # Read main.py source to verify BYOKMiddleware is added
         spec = importlib.util.find_spec('main')
         if spec and spec.origin:
             source = open(spec.origin).read()
         else:
-            # Fallback: read file directly
             import os
 
             main_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'main.py')
             source = open(main_path).read()
 
-        assert 'BYOKMiddleware' in source
-        assert 'app.add_middleware(BYOKMiddleware)' in source
+        assert 'AuthMiddleware' in source
+        assert 'app.add_middleware(AuthMiddleware)' in source
