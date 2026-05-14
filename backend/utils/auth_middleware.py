@@ -11,6 +11,7 @@ WebSocket endpoints are NOT handled here — they use explicit auth helpers
 in ``endpoints.py`` and ``byok.py``.
 """
 
+import asyncio
 import logging
 import os
 from typing import AsyncGenerator, Dict, Optional
@@ -43,8 +44,8 @@ def _verify_token(token: str) -> str:
         raise
 
 
-def _authenticate(request: Request) -> str:
-    """Extract and verify Firebase token from Authorization header."""
+def _extract_token(request: Request) -> str:
+    """Extract the raw bearer token from the Authorization header."""
     authorization = request.headers.get('authorization')
     if not authorization:
         raise HTTPException(status_code=401, detail="Authorization header not found")
@@ -53,7 +54,7 @@ def _authenticate(request: Request) -> str:
     if len(parts) != 2 or not parts[1]:
         raise HTTPException(status_code=401, detail="Invalid authorization token")
 
-    return _verify_token(parts[1])
+    return parts[1]
 
 
 def _extract_byok_headers(request: Request) -> Dict[str, str]:
@@ -71,9 +72,13 @@ async def require_firebase(request: Request) -> AsyncGenerator[str, None]:
 
     Sets ``request.state.uid`` and ``request.state.byok_keys``.
     Installs validated BYOK keys into ContextVar for deep LLM/STT access.
+
+    Blocking I/O (Firebase verify, Firestore BYOK lookup, telemetry write) is
+    offloaded to the default executor so the event loop stays free.
     """
+    token = _extract_token(request)
     try:
-        uid = _authenticate(request)
+        uid = await asyncio.to_thread(_verify_token, token)
     except firebase_auth.InvalidIdTokenError:
         raise HTTPException(status_code=401, detail="Invalid authorization token")
 
@@ -82,12 +87,12 @@ async def require_firebase(request: Request) -> AsyncGenerator[str, None]:
     try:
         platform = request.headers.get('x-app-platform')
         if platform:
-            users_db.record_user_platform(uid, platform)
+            await asyncio.to_thread(users_db.record_user_platform, uid, platform)
     except Exception:
         pass
 
     byok_keys_raw = _extract_byok_headers(request)
-    validated_keys = validate_and_return_byok_keys(uid, byok_keys_raw)
+    validated_keys = await asyncio.to_thread(validate_and_return_byok_keys, uid, byok_keys_raw)
     request.state.byok_keys = validated_keys
 
     ctx_keys = validated_keys if validated_keys else None
@@ -103,9 +108,15 @@ async def require_firebase_no_byok(request: Request) -> AsyncGenerator[str, None
 
     For endpoints like BYOK activation/deactivation and billing that must work
     even when BYOK keys are rotated or broken.
+
+    Raw (unvalidated) BYOK headers are placed in ``_byok_ctx`` so that the
+    activation flow can test provider keys before enrollment is complete.
+    ``request.state.byok_keys`` is always empty — only the ContextVar carries
+    the raw keys for these endpoints.
     """
+    token = _extract_token(request)
     try:
-        uid = _authenticate(request)
+        uid = await asyncio.to_thread(_verify_token, token)
     except firebase_auth.InvalidIdTokenError:
         raise HTTPException(status_code=401, detail="Invalid authorization token")
 
@@ -115,7 +126,7 @@ async def require_firebase_no_byok(request: Request) -> AsyncGenerator[str, None
     try:
         platform = request.headers.get('x-app-platform')
         if platform:
-            users_db.record_user_platform(uid, platform)
+            await asyncio.to_thread(users_db.record_user_platform, uid, platform)
     except Exception:
         pass
 
