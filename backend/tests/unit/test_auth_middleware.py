@@ -264,6 +264,19 @@ class TestRouteMatching(unittest.TestCase):
     def test_summary_app_ids_with_segment_is_custom(self):
         assert _resolve_auth_mode("POST", "/v1/summary-app-ids/abc123") == AuthMode.CUSTOM
 
+    # Codex-found missing routes
+    def test_fair_use_case_status_is_public(self):
+        assert _resolve_auth_mode("GET", "/v1/fair-use/case/ABC123/status") == AuthMode.PUBLIC
+
+    def test_phone_twiml_is_custom(self):
+        assert _resolve_auth_mode("POST", "/v1/phone/twiml") == AuthMode.CUSTOM
+
+    def test_migrate_owner_is_firebase(self):
+        assert _resolve_auth_mode("POST", "/v1/apps/migrate-owner") == AuthMode.FIREBASE
+
+    def test_docs_oauth2_redirect_is_public(self):
+        assert _resolve_auth_mode("GET", "/docs/oauth2-redirect") == AuthMode.PUBLIC
+
 
 class TestRouteRule(unittest.TestCase):
     """Test RouteRule matching logic."""
