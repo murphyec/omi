@@ -369,5 +369,79 @@ class TestAllowlistCompleteness(unittest.TestCase):
         # FIREBASE is the default, doesn't need explicit rules
 
 
+class TestMiddlewareDispatch(unittest.TestCase):
+    """Test AuthMiddleware dispatch through a real ASGI stack."""
+
+    def _make_app(self):
+        from fastapi import FastAPI, Request
+        from utils.auth_middleware import AuthMiddleware
+
+        app = FastAPI()
+        app.add_middleware(AuthMiddleware)
+
+        @app.get("/v1/health")
+        def health():
+            return {"status": "ok"}
+
+        @app.get("/v1/protected")
+        def protected(request: Request):
+            return {"uid": request.state.uid}
+
+        return app
+
+    def test_public_route_no_auth_needed(self):
+        from starlette.testclient import TestClient
+
+        client = TestClient(self._make_app())
+        resp = client.get("/v1/health")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+    def test_missing_authorization_returns_401(self):
+        from starlette.testclient import TestClient
+
+        client = TestClient(self._make_app())
+        resp = client.get("/v1/protected")
+        assert resp.status_code == 401
+        assert "Authorization header" in resp.json()["detail"]
+
+    def test_malformed_bearer_returns_401(self):
+        from starlette.testclient import TestClient
+
+        client = TestClient(self._make_app())
+        resp = client.get("/v1/protected", headers={"Authorization": "BadToken"})
+        assert resp.status_code == 401
+
+    @patch('utils.auth_middleware._verify_token', return_value='test-uid')
+    def test_valid_token_sets_uid(self, _mock_verify):
+        from starlette.testclient import TestClient
+
+        client = TestClient(self._make_app())
+        resp = client.get("/v1/protected", headers={"Authorization": "Bearer valid-token"})
+        assert resp.status_code == 200
+        assert resp.json()["uid"] == "test-uid"
+
+    @patch('utils.auth_middleware._verify_token', side_effect=Exception("bad token"))
+    def test_invalid_token_returns_401(self, _mock_verify):
+        from starlette.testclient import TestClient
+        from firebase_admin.auth import InvalidIdTokenError
+
+        with patch('utils.auth_middleware._verify_token', side_effect=InvalidIdTokenError("bad")):
+            client = TestClient(self._make_app())
+            resp = client.get("/v1/protected", headers={"Authorization": "Bearer bad-token"})
+            assert resp.status_code == 401
+
+    def test_contextvar_reset_on_public_route(self):
+        """ContextVar is properly reset after public route dispatch."""
+        from starlette.testclient import TestClient
+        from utils.byok import _byok_ctx
+
+        client = TestClient(self._make_app())
+        before = _byok_ctx.get()
+        client.get("/v1/health")
+        after = _byok_ctx.get()
+        assert before == after
+
+
 if __name__ == "__main__":
     unittest.main()
