@@ -69,6 +69,21 @@ for _sub in _DB_SUBMODULES:
 
 sys.modules.setdefault('utils.other.storage', MagicMock())
 
+# firebase_admin mock — needed because auth_middleware.py imports
+# InvalidIdTokenError at module level, and router files import auth_middleware.
+if 'firebase_admin' not in sys.modules:
+    _firebase_mock = MagicMock()
+
+    class _InvalidIdTokenError(Exception):
+        pass
+
+    _firebase_auth_mock = MagicMock()
+    _firebase_auth_mock.InvalidIdTokenError = _InvalidIdTokenError
+    _firebase_mock.auth = _firebase_auth_mock
+    sys.modules['firebase_admin'] = _firebase_mock
+    sys.modules['firebase_admin.auth'] = _firebase_auth_mock
+    sys.modules['firebase_admin.credentials'] = MagicMock()
+
 
 def pytest_runtest_setup(item):
     """Clear BYOK state cache before every test to prevent stale cache hits."""

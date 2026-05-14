@@ -916,7 +916,7 @@ class TestUAT_EndToEndFlow:
 
 
 class TestUAT_EndpointSignatures:
-    """Verify that all critical endpoints accept Request (AuthMiddleware pattern)."""
+    """Verify that all critical endpoints accept Request (per-router auth pattern)."""
 
     def test_send_message_has_request_param(self):
         import inspect
@@ -1004,20 +1004,25 @@ class TestUAT_EndpointSignatures:
 # ============================================================================
 
 
-class TestUAT_MiddlewarePresent:
-    """AuthMiddleware must be installed for unified auth + BYOK handling."""
+class TestUAT_PerRouterAuth:
+    """Per-router auth dependencies must be used instead of centralized middleware."""
 
-    def test_middleware_in_main(self):
+    def test_require_firebase_importable(self):
+        from utils.auth_middleware import require_firebase, require_firebase_no_byok
+
+        assert callable(require_firebase)
+        assert callable(require_firebase_no_byok)
+
+    def test_no_centralized_middleware_in_main(self):
         import importlib
+        import os
 
         spec = importlib.util.find_spec('main')
         if spec and spec.origin:
             source = open(spec.origin).read()
         else:
-            import os
-
             main_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'main.py')
             source = open(main_path).read()
 
-        assert 'AuthMiddleware' in source
-        assert 'app.add_middleware(AuthMiddleware)' in source
+        assert 'AuthMiddleware' not in source, "Centralized AuthMiddleware should be removed"
+        assert 'require_firebase' not in source, "Auth deps belong on routers, not in main.py"
