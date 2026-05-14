@@ -143,7 +143,6 @@ AUTH_RULES: List[RouteRule] = [
     RouteRule(frozenset({"GET"}), "/v1/apps/popular", AuthMode.PUBLIC),
     RouteRule(frozenset({"GET"}), "/v1/apps/*/reviews", AuthMode.PUBLIC),
     RouteRule(frozenset({"GET"}), "/v1/app/payment-plans", AuthMode.PUBLIC),
-    RouteRule(frozenset({"GET"}), "/v1/app/plans", AuthMode.PUBLIC),
     # --- Custom auth (own auth logic, not Firebase) ---
     # OAuth / auth flow
     RouteRule(_ALL, "/v1/auth/*", AuthMode.CUSTOM),
