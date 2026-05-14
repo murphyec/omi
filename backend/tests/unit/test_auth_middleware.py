@@ -8,25 +8,8 @@ Covers:
 """
 
 import os
-import sys
 import unittest
-from unittest.mock import MagicMock, patch
-
-# Mock database modules before importing auth_middleware — track what we inject
-# so we can clean up if tests are collected alongside other test modules.
-_MOCKED_MODULES = ['database', 'database._client', 'database.users', 'database.redis_db']
-_injected = []
-for _mod in _MOCKED_MODULES:
-    if _mod not in sys.modules:
-        sys.modules[_mod] = MagicMock()
-        _injected.append(_mod)
-
-
-def teardown_module():
-    """Remove only the mocks WE injected (don't clobber real imports from other tests)."""
-    for _mod in _injected:
-        sys.modules.pop(_mod, None)
-
+from unittest.mock import patch
 
 from utils.auth_middleware import (
     AUTH_RULES,
