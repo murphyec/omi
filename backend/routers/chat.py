@@ -730,6 +730,7 @@ async def transcribe_voice_message_stream(
           "is_user": false, "person_id": null}]
     """
     await websocket.accept()
+    set_byok_keys(byok_keys or {})
 
     # Paywalled desktop users — close before opening DG connection so we don't
     # bill Deepgram for a PTT stream that wouldn't be allowed to chat anyway.
