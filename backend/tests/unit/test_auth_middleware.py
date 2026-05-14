@@ -304,5 +304,162 @@ class TestNoDuplicateRoutes(unittest.TestCase):
         assert checked > 100, f"Only checked {checked} routes, expected 300+"
 
 
+class TestMalformedAuthBoundary(unittest.TestCase):
+    """Test malformed Authorization header edge cases."""
+
+    def _make_app(self):
+        firebase_router = APIRouter(dependencies=[Depends(require_firebase)])
+
+        @firebase_router.get("/v1/protected")
+        def protected(request: Request):
+            return {"uid": request.state.uid}
+
+        app = FastAPI()
+        app.include_router(firebase_router)
+        return app
+
+    def test_empty_bearer_returns_401(self):
+        client = TestClient(self._make_app())
+        resp = client.get("/v1/protected", headers={"Authorization": "Bearer "})
+        assert resp.status_code == 401
+
+    def test_no_space_separator_returns_401(self):
+        client = TestClient(self._make_app())
+        resp = client.get("/v1/protected", headers={"Authorization": "Bearertoken123"})
+        assert resp.status_code == 401
+
+    @patch('utils.auth_middleware._verify_token', return_value='uid-ok')
+    @patch('utils.auth_middleware.validate_and_return_byok_keys', return_value={})
+    def test_any_two_part_scheme_accepted(self, _byok, _verify):
+        client = TestClient(self._make_app())
+        resp = client.get("/v1/protected", headers={"Authorization": "Custom valid-token"})
+        assert resp.status_code == 200
+        _verify.assert_called_once_with("valid-token")
+
+
+class TestAsyncToThreadErrorPropagation(unittest.TestCase):
+    """Test that errors from asyncio.to_thread propagate correctly."""
+
+    def _make_app(self):
+        firebase_router = APIRouter(dependencies=[Depends(require_firebase)])
+
+        @firebase_router.get("/v1/protected")
+        def protected(request: Request):
+            return {"uid": request.state.uid}
+
+        app = FastAPI()
+        app.include_router(firebase_router)
+        return app
+
+    def test_generic_verify_exception_returns_500(self):
+        with patch('utils.auth_middleware._verify_token', side_effect=RuntimeError("Firebase SDK crashed")):
+            client = TestClient(self._make_app(), raise_server_exceptions=False)
+            resp = client.get("/v1/protected", headers={"Authorization": "Bearer tok"})
+            assert resp.status_code == 500
+
+    @patch('utils.auth_middleware._verify_token', return_value='uid-ctx')
+    @patch('utils.auth_middleware.validate_and_return_byok_keys', return_value={'openai': 'sk-test'})
+    def test_contextvar_reset_after_route_exception(self, _byok, _verify):
+        from utils.byok import _byok_ctx
+
+        firebase_router = APIRouter(dependencies=[Depends(require_firebase)])
+
+        @firebase_router.get("/v1/crash")
+        def crash(request: Request):
+            raise RuntimeError("route handler crashed")
+
+        app = FastAPI()
+        app.include_router(firebase_router)
+
+        before = _byok_ctx.get()
+        client = TestClient(app, raise_server_exceptions=False)
+        client.get("/v1/crash", headers={"Authorization": "Bearer tok", "x-byok-openai": "sk-test"})
+        after = _byok_ctx.get()
+        assert before == after
+
+    @patch('utils.auth_middleware._verify_token', return_value='uid-ok')
+    def test_byok_validation_generic_error_propagates(self, _verify):
+        with patch(
+            'utils.auth_middleware.validate_and_return_byok_keys', side_effect=RuntimeError("Firestore unreachable")
+        ):
+            client = TestClient(self._make_app(), raise_server_exceptions=False)
+            resp = client.get(
+                "/v1/protected",
+                headers={"Authorization": "Bearer tok", "x-byok-openai": "sk-test"},
+            )
+            assert resp.status_code == 500
+
+
+class TestMixedModeRouterAuthDeps(unittest.TestCase):
+    """Verify that mixed-mode routers assign the correct auth dependency to each sub-router."""
+
+    def _get_router_deps(self, mod_name):
+        import importlib
+
+        mod = importlib.import_module(f'routers.{mod_name}')
+        router = getattr(mod, 'router', None)
+        assert router is not None, f"{mod_name} has no router"
+
+        dep_map = {}
+        for route in router.routes:
+            if not hasattr(route, 'methods'):
+                continue
+            deps = [d.dependency for d in getattr(route, 'dependencies', [])]
+            for method in route.methods:
+                dep_map[(method, route.path)] = deps
+        return dep_map
+
+    def test_users_router_has_firebase_on_protected_routes(self):
+        dep_map = self._get_router_deps('users')
+        protected_keys = [
+            k for k in dep_map if 'create-user-data' not in k[1] and k[0] == 'GET' and '/v1/users/' in k[1]
+        ]
+        for key in protected_keys:
+            deps = dep_map[key]
+            dep_names = [d.__name__ for d in deps if hasattr(d, '__name__')]
+            assert (
+                'require_firebase' in dep_names or 'require_firebase_no_byok' in dep_names
+            ), f"Route {key} in users has no auth dep: {dep_names}"
+
+    def test_payment_router_skip_byok_on_billing(self):
+        dep_map = self._get_router_deps('payment')
+        skip_byok_routes = [k for k in dep_map if 'byok' in k[1].lower() or 'billing' in k[1].lower()]
+        for key in skip_byok_routes:
+            deps = dep_map[key]
+            dep_names = [d.__name__ for d in deps if hasattr(d, '__name__')]
+            assert (
+                'require_firebase_no_byok' in dep_names
+            ), f"BYOK billing route {key} should use require_firebase_no_byok, got: {dep_names}"
+
+    def test_chat_router_public_ws_no_http_auth(self):
+        import importlib
+
+        mod = importlib.import_module('routers.chat')
+        router = getattr(mod, 'router')
+        for route in router.routes:
+            if hasattr(route, 'path') and 'ws' in str(route.path).lower():
+                deps = [d.dependency for d in getattr(route, 'dependencies', [])]
+                dep_names = [d.__name__ for d in deps if hasattr(d, '__name__')]
+                assert (
+                    'require_firebase' not in dep_names
+                ), f"WebSocket route {route.path} should not have HTTP auth dep"
+
+    def test_apps_router_public_routes_have_no_auth(self):
+        import importlib
+
+        mod = importlib.import_module('routers.apps')
+        router = getattr(mod, 'router')
+        public_paths = ['/v1/approved-apps', '/v2/approved-apps', '/v1/app-capabilities']
+        for route in router.routes:
+            if not hasattr(route, 'path') or not hasattr(route, 'methods'):
+                continue
+            if route.path in public_paths:
+                deps = [d.dependency for d in getattr(route, 'dependencies', [])]
+                dep_names = [d.__name__ for d in deps if hasattr(d, '__name__')]
+                assert (
+                    'require_firebase' not in dep_names
+                ), f"Public route {route.path} should not have auth dep, got: {dep_names}"
+
+
 if __name__ == "__main__":
     unittest.main()
