@@ -75,10 +75,10 @@ def get_current_user_uid(
     authorization: str = Header(None),
     x_app_platform: str = Header(None, alias='X-App-Platform'),
 ):
-    """DEPRECATED: Auth is now handled by AuthMiddleware.
+    """DEPRECATED: Auth is now handled by per-router dependencies (require_firebase).
 
     Kept for backward compatibility with any code that still references it.
-    Prefer reading ``request.state.uid`` set by the middleware.
+    Prefer reading ``request.state.uid`` set by the auth dependency.
     """
     if not authorization:
         raise HTTPException(status_code=401, detail="Authorization header not found")
@@ -104,7 +104,7 @@ def get_current_user_uid_no_byok_validation(
     authorization: str = Header(None),
     x_app_platform: str = Header(None, alias='X-App-Platform'),
 ):
-    """DEPRECATED: BYOK-skip auth is now handled by AuthMiddleware (FIREBASE_SKIP_BYOK mode).
+    """DEPRECATED: BYOK-skip auth is now handled by require_firebase_no_byok dependency.
 
     Kept for backward compatibility.
     """
@@ -298,7 +298,7 @@ def with_rate_limit(policy_or_auth_dep, policy_name: str = None):
     """Per-endpoint rate limiting.
 
     Two calling conventions:
-    - ``with_rate_limit("policy")`` — reads uid from request.state (set by AuthMiddleware)
+    - ``with_rate_limit("policy")`` — reads uid from request.state (set by auth dependency)
     - ``with_rate_limit(auth_dep, "policy")`` — legacy, wraps a custom auth dep (e.g. developer API key)
     """
     if policy_name is None:
