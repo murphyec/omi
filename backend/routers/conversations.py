@@ -194,9 +194,8 @@ def patch_conversation_title(request: Request, conversation_id: str, title: str)
 
 
 @_firebase_router.patch("/v1/conversations/{conversation_id}/summary", tags=['conversations'])
-def patch_conversation_summary(
-    conversation_id: str, data: UpdateSummaryRequest, uid: str = Depends(auth.get_current_user_uid)
-):
+def patch_conversation_summary(request: Request, conversation_id: str, data: UpdateSummaryRequest):
+    uid = request.state.uid
     result = conversations_db.update_conversation_summary(uid, conversation_id, data.app_id, data.content)
     if result == 'not_found':
         raise HTTPException(status_code=404, detail="Conversation not found")
