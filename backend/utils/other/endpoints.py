@@ -1,12 +1,13 @@
 """Auth dependencies and rate limiting for FastAPI endpoints.
 
-HTTP auth is now handled by ``AuthMiddleware`` (utils/auth_middleware.py)
-which sets ``request.state.uid`` and ``request.state.byok_keys``.
+HTTP auth is handled by per-router dependencies in ``utils/auth_middleware.py``
+(``require_firebase``, ``require_firebase_no_byok``) which set
+``request.state.uid`` and ``request.state.byok_keys``.
 
 This module retains:
-- ``verify_token`` — shared by middleware and WS auth
+- ``verify_token`` — shared by auth deps and WS auth
 - ``with_rate_limit`` — per-endpoint rate limiting (reads request.state.uid)
-- WebSocket auth helpers — BaseHTTPMiddleware doesn't fire for WS
+- WebSocket auth helpers — router-level deps don't fire for WS
 - ``get_current_user_uid`` — DEPRECATED, kept only for backward compat
 - Rate limiting utilities
 """
