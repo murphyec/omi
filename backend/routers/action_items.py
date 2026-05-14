@@ -18,7 +18,6 @@ from database.vector_db import (
     search_action_items_by_vector,
 )
 from utils.users import get_user_display_name
-from utils.other import endpoints as auth
 from utils.notifications import (
     send_notification,
     send_action_item_data_message,
@@ -429,14 +428,15 @@ class BatchDeleteActionItemsRequest(BaseModel):
 
 
 @_firebase_router.post("/v1/action-items/batch-delete", tags=['action-items'])
-def batch_delete_action_items(request: BatchDeleteActionItemsRequest, uid: str = Depends(auth.get_current_user_uid)):
+def batch_delete_action_items(request: Request, data: BatchDeleteActionItemsRequest):
     """Delete multiple action items in one request.
 
     Firestore deletes go through chunked batched commits in the DB layer; the
     vector store delete and the FCM cancellation message both use their batch
     helpers — no per-id loop on this hot path.
     """
-    deleted_ids = action_items_db.delete_action_items_batch(uid, request.ids)
+    uid = request.state.uid
+    deleted_ids = action_items_db.delete_action_items_batch(uid, data.ids)
 
     if deleted_ids:
         delete_action_item_vectors_batch(uid, deleted_ids)
