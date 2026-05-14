@@ -143,10 +143,6 @@ methods_timeout = {
 
 app.add_middleware(TimeoutMiddleware, methods_timeout=methods_timeout)
 
-from utils.auth_middleware import AuthMiddleware
-
-app.add_middleware(AuthMiddleware)
-
 
 @app.on_event("shutdown")
 async def shutdown_event():
