@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from utils.other.endpoints import with_rate_limit
 from utils.retrieval.tool_services.conversations import get_conversations_text, search_conversations_text
 from utils.retrieval.tool_services.memories import get_memories_text, search_memories_text
+from utils.auth_middleware import require_firebase
 from utils.retrieval.tool_services.action_items import (
     get_action_items_text,
     create_action_item_text,
@@ -32,7 +33,7 @@ from utils.retrieval.tool_services.action_items import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_firebase)])
 
 
 # --------------- response envelope ---------------

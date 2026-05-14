@@ -13,13 +13,14 @@ from pydantic import BaseModel, Field
 
 from database import goals as goals_db
 from utils.other import endpoints as auth
+from utils.auth_middleware import require_firebase
 from utils.llm.goals import (
     suggest_goal as suggest_goal_llm,
     get_goal_advice as get_goal_advice_llm,
     extract_and_update_goal_progress,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_firebase)])
 
 
 class GoalType(str, Enum):

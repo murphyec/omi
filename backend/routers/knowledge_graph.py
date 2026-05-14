@@ -7,8 +7,9 @@ from database import memories as memories_db
 from database.auth import get_user_name
 from utils.llm.knowledge_graph import extract_knowledge_from_memory, rebuild_knowledge_graph
 from utils.other import endpoints as auth
+from utils.auth_middleware import require_firebase
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_firebase)])
 
 
 class KnowledgeNode(BaseModel):

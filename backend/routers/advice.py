@@ -5,8 +5,9 @@ from pydantic import BaseModel, Field
 
 import database.advice as advice_db
 from utils.other import endpoints as auth
+from utils.auth_middleware import require_firebase
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_firebase)])
 
 
 # ============================================================================

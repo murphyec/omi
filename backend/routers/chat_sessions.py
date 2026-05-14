@@ -17,10 +17,11 @@ from pydantic import BaseModel, Field
 import database.chat as chat_db
 from database.users import set_chat_message_rating_score
 from utils.other import endpoints as auth
+from utils.auth_middleware import require_firebase
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_firebase)])
 
 
 # ============================================================================

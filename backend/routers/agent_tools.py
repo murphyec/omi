@@ -24,10 +24,11 @@ from utils.other.endpoints import with_rate_limit
 from utils.retrieval.agentic import agent_config_context, CORE_TOOLS
 from utils.retrieval.tools.app_tools import load_app_tools
 from utils.log_sanitizer import sanitize
+from utils.auth_middleware import require_firebase
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_firebase)])
 
 GCE_PROJECT = "based-hardware"
 

@@ -7,8 +7,9 @@ from pydantic import BaseModel, Field
 
 import database.staged_tasks as staged_tasks_db
 from utils.other import endpoints as auth
+from utils.auth_middleware import require_firebase
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_firebase)])
 
 
 # ============================================================================

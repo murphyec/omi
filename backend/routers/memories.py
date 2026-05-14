@@ -12,10 +12,11 @@ from database.vector_db import delete_memory_vector, upsert_memory_vector, upser
 from models.memories import MemoryDB, Memory, MemoryCategory
 from utils.apps import update_personas_async
 from utils.other import endpoints as auth
+from utils.auth_middleware import require_firebase
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_firebase)])
 
 # Hard cap on memories per batch request. Keep aligned with the corresponding
 # Pydantic max_length validator below and with the Swift client chunker.

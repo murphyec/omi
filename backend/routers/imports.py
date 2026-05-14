@@ -16,8 +16,9 @@ import database.conversations as conversations_db
 from models.import_job import ImportJob, ImportJobResponse, ImportJobStatus, ImportSourceType
 from utils.other import endpoints as auth
 from utils.imports.limitless import create_import_job, process_limitless_import
+from utils.auth_middleware import require_firebase
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_firebase)])
 
 # Temp directory for uploaded files
 TEMP_DIR = '_temp'

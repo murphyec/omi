@@ -22,10 +22,11 @@ from models.tts import TtsSynthesizeRequest
 from utils.http_client import get_tts_client, get_tts_semaphore
 from utils.log_sanitizer import sanitize
 from utils.other import endpoints as auth
+from utils.auth_middleware import require_firebase
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_firebase)])
 
 # Limits mirror desktop/Backend-Rust/src/routes/tts.rs
 _TTS_BURST_PER_MINUTE = 50

@@ -21,10 +21,11 @@ from utils.other.storage import (
 from utils.stt.speaker_embedding import extract_embedding
 from utils.stt.vad import apply_vad_for_speech_profile
 import logging
+from utils.auth_middleware import require_firebase
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_firebase)])
 
 
 @router.get('/v3/speech-profile', tags=['v3'])

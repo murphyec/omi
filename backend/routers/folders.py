@@ -14,8 +14,9 @@ from models.folder import (
 from models.conversation import Conversation
 from utils.conversations.render import redact_conversations_for_list
 from utils.other import endpoints as auth
+from utils.auth_middleware import require_firebase
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_firebase)])
 
 
 @router.get('/v1/folders', response_model=List[Folder], tags=['folders'])

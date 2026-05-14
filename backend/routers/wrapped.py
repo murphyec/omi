@@ -17,10 +17,11 @@ from database.wrapped import WrappedStatus
 from utils.other import endpoints as auth
 from utils.wrapped.generate_2025 import generate_wrapped_2025
 import logging
+from utils.auth_middleware import require_firebase
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_firebase)])
 
 
 # Response models

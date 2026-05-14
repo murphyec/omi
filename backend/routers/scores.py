@@ -4,8 +4,9 @@ from fastapi import Request, APIRouter, Depends, Query
 
 import database.action_items as action_items_db
 from utils.other import endpoints as auth
+from utils.auth_middleware import require_firebase
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_firebase)])
 
 
 @router.get('/v1/daily-score', tags=['scores'])

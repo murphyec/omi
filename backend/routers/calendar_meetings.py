@@ -7,8 +7,9 @@ from pydantic import BaseModel, Field
 import database.calendar_meetings as calendar_db
 from models.calendar_context import CalendarMeetingContext, MeetingParticipant
 from utils.other import endpoints as auth
+from utils.auth_middleware import require_firebase
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_firebase)])
 
 
 class StoreMeetingRequest(BaseModel):

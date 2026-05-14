@@ -70,6 +70,7 @@ from utils.speaker_identification import detect_speaker_from_text
 from utils.stt.speaker_embedding import extract_embedding_from_bytes, compare_embeddings, SPEAKER_MATCH_THRESHOLD
 from utils.byok import set_byok_keys
 from utils.subscription import has_transcription_credits
+from utils.auth_middleware import require_firebase
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ AUDIO_SAMPLE_RATE = 16000
 
 _V1_DEPRECATION_HEADERS = {'Deprecation': 'true', 'Link': '</v2/sync-local-files>; rel="successor-version"'}
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_firebase)])
 
 
 # **********************************************
