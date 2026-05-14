@@ -2,8 +2,10 @@
 
 The desktop client sends user-provided API keys as headers on every request
 (`X-BYOK-OpenAI`, `X-BYOK-Anthropic`, `X-BYOK-Gemini`, `X-BYOK-Deepgram`).
-A FastAPI middleware stashes them in a per-request contextvar; the LLM/STT
-clients can then read them without re-reading the request object.
+Per-router auth dependencies (``require_firebase`` in auth_middleware.py)
+validate and install them into a per-request ContextVar; WebSocket handlers
+use explicit helpers in this module.  LLM/STT clients read the ContextVar
+without re-reading the request object.
 
 Keys are NEVER persisted — only fingerprints (see `database.users.set_byok_active`).
 
@@ -94,14 +96,14 @@ def has_byok_keys() -> bool:
 
 
 def set_byok_keys(keys: Dict[str, str]):
-    """Used by the middleware; also useful from WS handlers that read headers manually."""
+    """Install validated BYOK keys into the ContextVar. Used by WS handlers."""
     _byok_ctx.set({k: v for k, v in keys.items() if v})
 
 
 def extract_byok_from_websocket(websocket: WebSocket) -> Dict[str, str]:
     """Read BYOK headers from a WebSocket's initial upgrade request.
 
-    BaseHTTPMiddleware only fires for HTTP scope, so WebSocket handlers must
+    Router-level HTTP deps don't fire for WebSocket scope, so WS handlers
     call this manually and then pass the result to ``set_byok_keys``.
     """
     keys: Dict[str, str] = {}
@@ -237,8 +239,8 @@ def validate_and_return_byok_keys(uid: str, keys: Dict[str, str]) -> Dict[str, s
     """Validate BYOK keys against Firestore enrollment and return validated keys.
 
     This function NEVER mutates the ContextVar — it only reads Firestore state
-    and returns a dict.  The caller (an async handler) is responsible for
-    calling ``set_byok_keys()`` with the result.
+    and returns a dict.  The caller (``require_firebase`` for HTTP, WS handler
+    for WebSocket) is responsible for installing keys into ``_byok_ctx``.
 
     Returns:
         The validated keys dict if the user is BYOK-active and keys match.
